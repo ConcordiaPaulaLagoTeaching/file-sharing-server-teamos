@@ -67,6 +67,12 @@ public class FileServer {
                         String command = parts[0].toUpperCase();
 
                         switch (command) {
+                            // Added a ping command to check if the server is running and if the singlethreading is working correctly
+                            case "PING": {
+                                writer.println("PONG");
+                                break;
+                            }
+
                             case "CREATE": {
                                 if (parts.length < 2) {
                                     writer.println("ERROR: missing filename");
