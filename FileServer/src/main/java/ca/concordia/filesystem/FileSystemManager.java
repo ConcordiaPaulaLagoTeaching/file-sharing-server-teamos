@@ -10,7 +10,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.BitSet;
 import java.util.List;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.concurrent.locks.*;
 
 /**
  * FileSystemManager is a tiny, persistent, single-file filesystem with fixed-size metadata:
@@ -66,7 +66,7 @@ public class FileSystemManager {
     private final BitSet usedFnodes;       // true if fnode[i] is in use (blockIndex >= 0)
 
     // Readers-writer lock: allows concurrent reads; writes are exclusive
-    private final ReentrantReadWriteLock rw = new ReentrantReadWriteLock(true);
+    private final ReadWriteLock readWriteLock = new ReentrantReadWriteLock(true); // flag set to true for fairness to prevent starvation
 
     /**
      * Mounts or initializes the filesystem image.
@@ -128,7 +128,7 @@ public class FileSystemManager {
      */
     public void createFile(String fileName) throws Exception {
         validateName(fileName);
-        rw.writeLock().lock();
+        readWriteLock.writeLock().lock();
         try {
             if (findEntry(fileName) >= 0) {
                 throw new IllegalStateException("ERROR: file " + fileName + " already exists");
@@ -141,7 +141,7 @@ public class FileSystemManager {
             fentries[slot] = new FEntry(fileName, (short) 0, (short) -1);
             writeFEntries(); // persist directory table
         } finally {
-            rw.writeLock().unlock();
+            readWriteLock.writeLock().unlock();
         }
     }
 
@@ -150,7 +150,7 @@ public class FileSystemManager {
      * Leaves the FEntry slot empty.
      */
     public void deleteFile(String fileName) throws Exception {
-        rw.writeLock().lock();
+        readWriteLock.writeLock().lock();
         try {
             int ei = findEntryOrThrow(fileName);
             FEntry e = fentries[ei];
@@ -163,7 +163,7 @@ public class FileSystemManager {
             writeFEntries();
             writeFNodes(); // persist node updates from free
         } finally {
-            rw.writeLock().unlock();
+            readWriteLock.writeLock().unlock();
         }
     }
 
@@ -176,7 +176,7 @@ public class FileSystemManager {
      * 5) Free/zero the OLD chain.
      */
     public void writeFile(String fileName, byte[] contents) throws Exception {
-        rw.writeLock().lock();
+        readWriteLock.writeLock().lock();
         try {
             int ei = findEntryOrThrow(fileName);
             FEntry old = fentries[ei];
@@ -241,7 +241,7 @@ public class FileSystemManager {
             rebuildBitmaps();
 
         } finally {
-            rw.writeLock().unlock();
+            readWriteLock.writeLock().unlock();
         }
     }
 
@@ -250,7 +250,7 @@ public class FileSystemManager {
      * Errors if chain is broken or file is missing (consistent with spec).
      */
     public byte[] readFile(String fileName) throws Exception {
-        rw.readLock().lock();
+        readWriteLock.readLock().lock();
         try {
             int ei = findEntryOrThrow(fileName);
             FEntry e = fentries[ei];
@@ -280,7 +280,7 @@ public class FileSystemManager {
             for (byte[] c : chunks) { System.arraycopy(c, 0, out, p, c.length); p += c.length; }
             return out;
         } finally {
-            rw.readLock().unlock();
+            readWriteLock.readLock().unlock();
         }
     }
 
@@ -288,7 +288,7 @@ public class FileSystemManager {
      * Return all non-empty filenames (sorted).
      */
     public String[] listFiles() {
-        rw.readLock().lock();
+        readWriteLock.readLock().lock();
         try {
             return Arrays.stream(fentries)
                     .map(FS::nameOrEmpty)
@@ -296,7 +296,7 @@ public class FileSystemManager {
                     .sorted()
                     .toArray(String[]::new);
         } finally {
-            rw.readLock().unlock();
+            readWriteLock.readLock().unlock();
         }
     }
 
