@@ -51,7 +51,7 @@ public class FileSystemManager {
     private static final int FENTRY_TABLE_OFFSET  = 0; 
     private static final int FNODE_TABLE_OFFSET   = FENTRY_TABLE_OFFSET + MAX_FILES * FENTRY_BYTES;
     private static final int TOTAL_METADATA_SIZE  = FNODE_TABLE_OFFSET + MAX_FNODES * FNODE_BYTES;
-    private static final int METADATA_BLOCK_COUNT = (int) Math.ceil(TOTAL_METADATA_SIZE / (double) BLOCK_SIZE);
+    private static final int METADATA_BLOCK_COUNT = (TOTAL_METADATA_SIZE + BLOCK_SIZE - 1) / BLOCK_SIZE; // round up TOTAL_METADATA_SIZE / BLOCK_SIZE to the nearest integer
     private static final int DATA_REGION_OFFSET   = METADATA_BLOCK_COUNT * BLOCK_SIZE;
 
     // -----------------------
@@ -130,6 +130,16 @@ public class FileSystemManager {
 
         // Write the data to the disk
         disk.write(data);
+    }
+
+    private byte[] readDataBlock(int index, int length) throws IOException {
+        // Seek to the start of the data block at the given index
+        disk.seek(getDataBlockOffset(index));
+
+        // Read the data from the disk
+        byte[] data = new byte[length];
+        disk.readFully(data);
+        return data;
     }
 
     /**
@@ -402,12 +412,10 @@ public class FileSystemManager {
                     // If a chain node is invalid, treat as missing/corrupt
                     throw new IllegalStateException("ERROR: file " + fileName + " does not exist");
                 }
-                long off = getDataBlockOffset(n.blockIndex);
-                byte[] buf = new byte[Math.min(BLOCK_SIZE, remaining)];
-                disk.seek(off);
-                disk.readFully(buf, 0, buf.length);
-                chunks.add(buf);
-                remaining -= buf.length;
+
+                byte[] data = readDataBlock(n.blockIndex, Math.min(BLOCK_SIZE, remaining));
+                chunks.add(data);
+                remaining -= data.length;
                 fi = n.next;
             }
 
