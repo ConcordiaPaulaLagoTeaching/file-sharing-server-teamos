@@ -1,4 +1,5 @@
 package ca.concordia.server;
+
 import ca.concordia.filesystem.FileSystemManager;
 
 import java.io.BufferedReader;
@@ -6,7 +7,6 @@ import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.util.Base64; // TO-DO: Add comment
 
 
 /*
@@ -29,15 +29,15 @@ class ClientHandler extends Thread {
         System.out.println("Handling client: " + clientSocket + " in thread " + Thread.currentThread().getName());
         
         try (
-                BufferedReader reader = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
-                PrintWriter writer = new PrintWriter(clientSocket.getOutputStream(), true)
+            BufferedReader reader = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
+            PrintWriter writer = new PrintWriter(clientSocket.getOutputStream(), true)
         ) {
             String line;
 
             // Read one line at a time and dispatch client to appropriate method in FileSystemManager
             while ((line = reader.readLine()) != null) {
                 System.out.println("Received from client " + clientSocket + ": " + line);
-                String[] parts = line.split(" ", 3);
+                String[] parts = line.split(" ", 3); // Split into max 3 parts
                 String command = parts[0].toUpperCase();
 
                 switch (command) {
@@ -46,30 +46,48 @@ class ClientHandler extends Thread {
                         writer.println("PONG");
                         break;
                     }
-
-                    // Create a new file
                     case "CREATE": {
-                        // Check if the filename is provided
                         if (parts.length < 2) {
-                            writer.println("ERROR: Missing filename.");
+                            writer.println("ERROR: missing filename");
                             break;
                         }
-
-                        String filename = parts[1];
-                        // Check if the filename is 11 characters or less
-                        if (filename.length() > 11) {
-                            writer.println("ERROR: Filename too large.");
-                            break;
-                        }
+                        String name = parts[1];
                         try {
-                            fsManager.createFile(filename);
-                            writer.println("SUCCESS: File '" + filename + "' created.");
+                            fsManager.createFile(name);
+                            writer.println("SUCCESS: File '" + name + "' created.");
+                            writer.flush();
                         } catch (Exception e) {
-                            writer.println("ERROR: Failed to create file '" + filename + "': " + e.getMessage());
+                            // Pass through meaningful error message; fall back to generic
+                            writer.println(e.getMessage() != null ? e.getMessage() : "ERROR: internal error");
                         }
                         break;
-                    }          
+                    }
 
+                    case "DELETE": {
+                        if (parts.length < 2) {
+                            writer.println("ERROR: missing filename");
+                            break;
+                        }
+                        String name = parts[1];
+                        try {
+                            fsManager.deleteFile(name);
+                            writer.println("OK");
+                        } catch (Exception e) {
+                            writer.println(e.getMessage() != null ? e.getMessage() : "ERROR: internal error");
+                        }
+                        break;
+                    }
+
+                    case "LIST": {
+                        try {
+                            String[] names = fsManager.listFiles();
+                            // Comma-separated list of filenames (empty line if none)
+                            writer.println(String.join(",", names));
+                        } catch (Exception e) {
+                            writer.println(e.getMessage() != null ? e.getMessage() : "ERROR: internal error");
+                        }
+                        break;
+                    }
                     
                     case "QUIT":
                         // Disconnect each client only (not the entire server)
@@ -111,6 +129,7 @@ public class FileServer {
     }
 
     // Start the server and listen for client connections
+    // Process each client connection in a separate thread
     public void start(){
         try (ServerSocket serverSocket = new ServerSocket(this.port)) {
             System.out.println("Server started. Listening on port " + this.port + "...");
