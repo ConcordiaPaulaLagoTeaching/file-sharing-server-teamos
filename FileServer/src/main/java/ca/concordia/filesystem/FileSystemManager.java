@@ -287,11 +287,10 @@ public class FileSystemManager {
             // Free chain & zero the data it referenced
             freeChainZero(fileEntry.getFirstBlock());
 
-            // Free the FEntry slot
-            fEntryTable[fentryIndex] = new FEntry("", (short) 0, (short) -1);
+            // Free the FEntry slot by writing a empty FEntry to the disk
+            writeFEntry(fentryIndex, new FEntry("", (short) 0, (short) -1));
 
-            // Write both FEntry and FNode tables to disk
-            writeFEntries();
+            // Write the FNode table to disk
             writeFNodes();
         }
         finally {
@@ -363,10 +362,7 @@ public class FileSystemManager {
             // Stage 3: atomically "flip" directory entry to new chain
             short newSizeU16 = (short) (size & 0xFFFF);
             short newHeadS16 = (short) ((head == null) ? -1 : head.intValue());
-            fEntryTable[ei].setFilesize(newSizeU16);
-            // FEntry has no setter for firstBlock → re-create entry with same name
-            fEntryTable[ei] = new FEntry(fEntryTable[ei].getFilename(), newSizeU16, newHeadS16);
-            writeFEntries();
+            writeFEntry(ei, new FEntry(fEntryTable[ei].getFilename(), newSizeU16, newHeadS16));
 
             // Stage 4: free + zero OLD chain (do AFTER flipping so write is atomic)
             if (old.getFirstBlock() >= 0) {
@@ -468,13 +464,6 @@ public class FileSystemManager {
             int next = fNodeTable[fi].next;
             fNodeTable[fi].next = -1;
             fi = next;
-        }
-    }
-
-    /** Persist all FEntries in order (fixed width). */
-    private void writeFEntries() throws IOException {
-        for (int i = 0; i < MAX_FILES; i++) {
-            writeFEntry(i, fEntryTable[i]);
         }
     }
 
