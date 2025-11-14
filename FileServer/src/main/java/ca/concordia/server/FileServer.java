@@ -121,7 +121,7 @@ class ClientHandler extends Thread {
                         }
                         break;
                     }
-                    
+
                     case "DEBUG": {
                         fsManager.debugPrintFileSystem();
                         break;

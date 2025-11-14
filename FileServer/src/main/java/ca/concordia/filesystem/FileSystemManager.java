@@ -183,7 +183,7 @@ public class FileSystemManager {
         freeFNode(nextIndex);
     }
 
-    public void debugPrintFileSystem() {
+    public void debugPrintFileSystem() throws IOException {
         System.out.println("Constants for the filesystem:");
         System.out.println("BLOCKSIZE: " + BLOCKSIZE);
         System.out.println("MAXFILES: " + MAXFILES);
@@ -365,13 +365,13 @@ public class FileSystemManager {
             // Stage 1: write payload to selected data blocks
             int pos = 0;
             for (int k = 0; k < blocksNeeded; k++) {
-                int dataBlockIdx = METADATA_BLOCK_COUNT + freeFn.get(k); // absolute block index
-                long off = getDataBlockOffset(dataBlockIdx);
                 byte[] buf = new byte[BLOCKSIZE];
                 int len = Math.min(BLOCKSIZE, size - pos);
                 if (len > 0) System.arraycopy(contents, pos, buf, 0, len);
-                disk.seek(off);
-                disk.write(buf);
+            
+                int dataBlockIdx = freeFn.get(k);
+                writeDataBlock(dataBlockIdx, buf);
+
                 pos += len;
             }
 
@@ -380,10 +380,7 @@ public class FileSystemManager {
             for (int k = 0; k < blocksNeeded; k++) {
                 int fnIdx = freeFn.get(k);
 
-                int dataBlockAbs = METADATA_BLOCK_COUNT + freeFn.get(k);
-                fNodeTable[fnIdx] = new FNode(dataBlockAbs);
-                fNodeTable[fnIdx].next = -1;
-
+                fNodeTable[fnIdx] = new FNode(fnIdx, -1);
                 if (prev != null) fNodeTable[prev].next = fnIdx;
                 if (head == null) head = fnIdx;
 
