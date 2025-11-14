@@ -207,8 +207,14 @@ public class FileSystemManager {
     public void writeFile(String fileName, byte[] contents) throws Exception {
         readWriteLock.writeLock().lock();
         try {
-            int ei = findEntryOrThrow(fileName);
-            FEntry old = fentries[ei];
+            // Find the index of the file in the FEntry table and throw an error if it doesn't exist
+            int fentryIndex = findEntry(fileName);
+            if (fentryIndex < 0)  {
+                throw new IllegalStateException("ERROR: file " + fileName + " does not exist");
+            }
+
+            // Get the current FEntry for the file
+            FEntry old = fentries[fentryIndex];
 
             // Size validation (fits in unsigned short per spec)
             int size = (contents == null) ? 0 : contents.length;
@@ -281,8 +287,14 @@ public class FileSystemManager {
     public byte[] readFile(String fileName) throws Exception {
         readWriteLock.readLock().lock();
         try {
-            int ei = findEntryOrThrow(fileName);
-            FEntry e = fentries[ei];
+            // Find the index of the file in the FEntry table and throw an error if it doesn't exist
+            int fentryIndex = findEntry(fileName);
+            if (fentryIndex < 0) {
+                throw new IllegalStateException("ERROR: file " + fileName + " does not exist");
+            }
+
+            // Get the FEntry for the file
+            FEntry e = fentries[fentryIndex];
             int remaining = Short.toUnsignedInt(e.getFilesize());
             if (remaining == 0) return new byte[0];
 
@@ -336,26 +348,11 @@ public class FileSystemManager {
     // Helpers: lookup, allocation, freeing, serialization
     // =========================================================================
 
-    /** Find directory entry index or throw "does not exist". */
-    private int findEntryOrThrow(String name) {
-        int idx = findEntry(name);
-        if (idx < 0) throw new IllegalStateException("ERROR: file " + name + " does not exist");
-        return idx;
-    }
-
     /** Linear search for filename in fentries (small MAX_FILES, so OK). */
     private int findEntry(String name) {
         for (int i = 0; i < MAX_FILES; i++) {
             String n = FS.nameOrEmpty(fentries[i]);
             if (!n.isEmpty() && n.equals(name)) return i;
-        }
-        return -1;
-    }
-
-    /** First empty directory slot index, or -1 if all used. */
-    private int firstFreeFentry() {
-        for (int i = 0; i < MAX_FILES; i++) {
-            if (FS.nameOrEmpty(fentries[i]).isEmpty()) return i;
         }
         return -1;
     }
