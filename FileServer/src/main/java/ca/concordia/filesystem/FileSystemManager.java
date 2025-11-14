@@ -157,6 +157,29 @@ public class FileSystemManager {
         return out;
     }
 
+    /** Free an FNode chain starting at the given index and zeroing the data blocks. */
+    private void freeFNode(int index) throws IOException {
+        // Simpy return if the index is out of bounds
+        if (index < 0 || index >= MAX_FNODES) {
+            return;
+        }
+        // No need to free if the FNode is already free
+        if (fNodeTable[index].blockIndex < 0) {
+            return;
+        }
+
+        int nextIndex = fNodeTable[index].next;
+
+        // Write 0s to the corresponding data block
+        writeDataBlock(fNodeTable[index].blockIndex, new byte[BLOCK_SIZE]);
+
+        // Free the FNode by writing an empty FNode to the disk
+        writeFNode(index, new FNode(-index, -1));
+        
+        // Free the next FNode
+        freeFNode(nextIndex);
+    }
+
     /**
      * Mounts or initializes the filesystem image.
      * If the underlying file is new (length == 0), we initialize empty tables and zero data region.
@@ -281,17 +304,11 @@ public class FileSystemManager {
                 throw new IllegalStateException("ERROR: file " + fileName + " does not exist");
             }
 
-            // Get the FEntry for the file
-            FEntry fileEntry = fEntryTable[fentryIndex];
-
-            // Free chain & zero the data it referenced
-            freeChainZero(fileEntry.getFirstBlock());
+            // Free the FNode chain & zero the data it referenced
+            freeFNode(fEntryTable[fentryIndex].getFirstBlock());
 
             // Free the FEntry slot by writing a empty FEntry to the disk
             writeFEntry(fentryIndex, new FEntry("", (short) 0, (short) -1));
-
-            // Write the FNode table to disk
-            writeFNodes();
         }
         finally {
             // Releasing write lock after file deletion is complete
@@ -350,14 +367,20 @@ public class FileSystemManager {
             Integer head = null, prev = null;
             for (int k = 0; k < blocksNeeded; k++) {
                 int fnIdx = freeFn.get(k);
+
                 int dataBlockAbs = METADATA_BLOCK_COUNT + freeFn.get(k);
                 fNodeTable[fnIdx] = new FNode(dataBlockAbs);
                 fNodeTable[fnIdx].next = -1;
+
                 if (prev != null) fNodeTable[prev].next = fnIdx;
                 if (head == null) head = fnIdx;
+
                 prev = fnIdx;
             }
-            writeFNodes(); // persist new chain
+            // Write the updated FNode chain to disk
+            for (int k = 0; k < blocksNeeded; k++) {
+                writeFNode(freeFn.get(k), fNodeTable[freeFn.get(k)]);
+            }
 
             // Stage 3: atomically "flip" directory entry to new chain
             short newSizeU16 = (short) (size & 0xFFFF);
@@ -366,8 +389,7 @@ public class FileSystemManager {
 
             // Stage 4: free + zero OLD chain (do AFTER flipping so write is atomic)
             if (old.getFirstBlock() >= 0) {
-                freeChainZero(old.getFirstBlock());
-                writeFNodes();
+                freeFNode(old.getFirstBlock());
             }
 
         } finally {
@@ -434,43 +456,6 @@ public class FileSystemManager {
         } finally {
             // Releasing read lock after read operation is complete
             readWriteLock.readLock().unlock();
-        }
-    }
-
-    // =========================================================================
-    // Helpers: lookup, allocation, freeing, serialization
-    // =========================================================================
-
-    /**
-     * Free a chain starting at head index: zero its data blocks, mark fnodes free.
-     * Safe if head == -1 (no-op).
-     */
-    private void freeChainZero(int head) throws IOException {
-        int fi = head;
-        while (fi != -1) {
-            FNode n = fNodeTable[fi];
-            if (n == null) break;
-
-            // Overwrite data for privacy
-            if (n.blockIndex >= 0) {
-                long off = getDataBlockOffset(n.blockIndex);
-                byte[] zero = new byte[BLOCK_SIZE];
-                disk.seek(off);
-                disk.write(zero);
-            }
-
-            // Free node (mark unused)
-            fNodeTable[fi].blockIndex = -1;
-            int next = fNodeTable[fi].next;
-            fNodeTable[fi].next = -1;
-            fi = next;
-        }
-    }
-
-    /** Persist all FNodes in order. */
-    private void writeFNodes() throws IOException {
-        for (int i = 0; i < MAX_FNODES; i++) {
-            writeFNode(i, fNodeTable[i]);
         }
     }
 }
