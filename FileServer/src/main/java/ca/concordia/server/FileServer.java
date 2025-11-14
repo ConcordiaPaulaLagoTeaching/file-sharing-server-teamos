@@ -124,6 +124,7 @@ class ClientHandler extends Thread {
 
                     case "DEBUG": {
                         fsManager.debugPrintFileSystem();
+                        writer.println("SUCCESS: Debug information printed.");
                         break;
                     }
                     

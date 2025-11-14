@@ -177,7 +177,7 @@ public class FileSystemManager {
         writeDataBlock(fNodeTable[index].blockIndex, new byte[BLOCKSIZE]);
 
         // Free the FNode by writing an empty FNode to the disk
-        writeFNode(index, new FNode(-index, -1));
+        writeFNode(index, new FNode(-1, -1));
         
         // Free the next FNode
         freeFNode(nextIndex);
