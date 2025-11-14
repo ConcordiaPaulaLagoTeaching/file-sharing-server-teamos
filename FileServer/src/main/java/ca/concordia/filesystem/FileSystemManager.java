@@ -119,28 +119,45 @@ public class FileSystemManager {
     // Public API (used by the server; these implement assignment semantics)
     // =========================================================================
 
-    /**
-     * Create an empty file with the given name (≤ 11 chars) using first free FEntry.
-     * Errors:
-     *  - "ERROR: filename too large"
-     *  - "ERROR: file <name> already exists"
-     *  - "ERROR: file too large" (used here to signal no free directory entry)
-     */
     public void createFile(String fileName) throws Exception {
-        validateName(fileName);
+        if (fileName.isEmpty()) {
+            throw new IllegalArgumentException("ERROR: filename cannot be empty");
+        }
+        if (fileName.length() > FENTRY_NAME_LEN) {
+            throw new IllegalArgumentException("ERROR: filename too large");
+        }
+        
+        // Acquire write lock.
+        // This thread gets exclusive access to the filesystem until it releases the lock
         readWriteLock.writeLock().lock();
         try {
+            // Check if file already exists
             if (findEntry(fileName) >= 0) {
                 throw new IllegalStateException("ERROR: file " + fileName + " already exists");
             }
-            int slot = firstFreeFentry();
-            if (slot < 0) {
-                // Spec uses this message for "not enough resources" as well
-                throw new IllegalStateException("ERROR: file too large");
+            
+            // Find the first free FEntry index
+            int freeFentryIndex = -1;
+            for (int i = 0; i < fentries.length; i++) {
+                if (fentries[i] == null || fentries[i].getFilename().isEmpty()) {
+                    freeFentryIndex = i;
+                    break;
+                }
             }
-            fentries[slot] = new FEntry(fileName, (short) 0, (short) -1);
-            writeFEntries(); // persist directory table
-        } finally {
+            
+            // If no free FEntry is found, throw an error
+            if (freeFentryIndex < 0) {
+                throw new IllegalStateException("ERROR: cannot create more files");
+            }
+
+            // Create a new FEntry for the file at the free index
+            fentries[freeFentryIndex] = new FEntry(fileName, (short) 0, (short) -1);
+
+            // Write the FEntry table to disk
+            writeFEntries();
+        } 
+        finally {
+            // Releasing write lock after file creation is complete
             readWriteLock.writeLock().unlock();
         }
     }
@@ -303,13 +320,6 @@ public class FileSystemManager {
     // =========================================================================
     // Helpers: lookup, allocation, freeing, serialization
     // =========================================================================
-
-    /** Validate filename constraints per spec (non-empty, ≤ 11 chars). */
-    private void validateName(String name) {
-        if (name == null || name.isEmpty() || name.length() > FENTRY_NAME_LEN) {
-            throw new IllegalArgumentException("ERROR: filename too large");
-        }
-    }
 
     /** Find directory entry index or throw "does not exist". */
     private int findEntryOrThrow(String name) {
