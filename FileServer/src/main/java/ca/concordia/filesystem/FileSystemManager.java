@@ -35,7 +35,6 @@ public class FileSystemManager {
     private static final int BLOCK_SIZE = 128;   // Size of one data block (bytes)
     private static final int MAX_FILES  = 5;     // Max number of directory entries
     private static final int MAX_FNODES = 10;     // Max number of directory entries
-    private final int MAX_BLOCKS;         // Number of data blocks (derived from total image size)
 
     // -----------------------
     // On-disk struct sizes
@@ -49,13 +48,11 @@ public class FileSystemManager {
     // -----------------------
     private final RandomAccessFile disk;   // backing file (the whole filesystem)
 
-    private static final int FENTRY_TABLE_OFFSET = 0; 
-    private static final int FNODE_TABLE_OFFSET  = FENTRY_TABLE_OFFSET + MAX_FILES * FENTRY_BYTES;
-
-    private final int  metaBytes;          // total bytes of metadata region (entries + nodes)
-    private final int  metaBlocks;         // metadata rounded up to whole blocks
-    private final int  dataStartBlock;     // first absolute block index used for data
-    private final long imageBytes;         // full file size (metadata blocks + data blocks) * BLOCK_SIZE
+    private static final int FENTRY_TABLE_OFFSET  = 0; 
+    private static final int FNODE_TABLE_OFFSET   = FENTRY_TABLE_OFFSET + MAX_FILES * FENTRY_BYTES;
+    private static final int TOTAL_METADATA_SIZE  = FNODE_TABLE_OFFSET + MAX_FNODES * FNODE_BYTES;
+    private static final int METADATA_BLOCK_COUNT = (int) Math.ceil(TOTAL_METADATA_SIZE / (double) BLOCK_SIZE);
+    private static final int DATA_REGION_OFFSET   = METADATA_BLOCK_COUNT * BLOCK_SIZE;
 
     // -----------------------
     // In-memory mirrors
@@ -63,13 +60,10 @@ public class FileSystemManager {
     private final FEntry[] fEntryTable;
     private final FNode[]  fNodeTable;
 
-    // Bitmaps for quick "free" queries (rebuilt on load and after mutations)
-    private final BitSet usedDataBlocks;   // true if data-region block is referenced by a fnode
     private final BitSet usedFnodes;       // true if fnode[i] is in use (blockIndex >= 0)
 
     // Readers-writer lock: allows concurrent reads; writes are exclusive
     private final ReadWriteLock readWriteLock = new ReentrantReadWriteLock(true); // flag set to true for fairness to prevent starvation
-
 
     /** Read an FEntry from the disk. */
     private FEntry readFEntry(int index) throws IOException {
@@ -125,9 +119,14 @@ public class FileSystemManager {
         disk.writeInt(fNode.next);
     }
 
+    /** Get the offset of the data block at the given index. */
+    private int getDataBlockOffset(int index) {
+        return DATA_REGION_OFFSET + index * BLOCK_SIZE;
+    }
+
     private void writeDataBlock(int index, byte[] data) throws IOException {
         // Seek to the start of the data block at the given index
-        disk.seek(DATA_REGION_OFFSET + index * BLOCK_SIZE);
+        disk.seek(getDataBlockOffset(index));
 
         // Write the data to the disk
         disk.write(data);
@@ -139,60 +138,72 @@ public class FileSystemManager {
      */
     public FileSystemManager(String filename, int totalSizeBytes) {
         try {
-            // Validate total size: must be a positive multiple of block size
-            if (totalSizeBytes <= 0 || (totalSizeBytes % BLOCK_SIZE) != 0) {
-                throw new IllegalArgumentException("totalSize must be a positive multiple of BLOCK_SIZE");
-            }
-            this.MAX_BLOCKS = totalSizeBytes / BLOCK_SIZE;
+            // // Validate total size: must be a positive multiple of block size
+            // if (totalSizeBytes <= 0 || (totalSizeBytes % BLOCK_SIZE) != 0) {
+            //     throw new IllegalArgumentException("totalSize must be a positive multiple of BLOCK_SIZE");
+            // }
+            // this.MAX_BLOCKS = totalSizeBytes / BLOCK_SIZE;
 
-            // Compute metadata footprint and layout offsets
-            int feBytes = MAX_FILES * FENTRY_BYTES;
-            int fnBytes = MAX_BLOCKS * FNODE_BYTES;
-            this.metaBytes = feBytes + fnBytes;
-            this.metaBlocks = (int) Math.ceil(metaBytes / (double) BLOCK_SIZE);
-            this.dataStartBlock    = metaBlocks;
 
-            // Total image length (metadata blocks + data blocks)
-            this.imageBytes = (long) (metaBlocks + MAX_BLOCKS) * BLOCK_SIZE;
+            // Print all the offsets and sizes
+            System.out.println("BLOCK_SIZE: " + BLOCK_SIZE);
+            System.out.println("MAX_FILES: " + MAX_FILES);
+            System.out.println("MAX_FNODES: " + MAX_FNODES);
+            System.out.println();
+            System.out.println("FENTRY_BYTES: " + FENTRY_BYTES);
+            System.out.println("FNODE_BYTES: " + FNODE_BYTES);
+            System.out.println("FENTRY_NAME_LEN: " + FENTRY_NAME_LEN);
+            System.out.println();
+            System.out.println("FENTRY_TABLE_OFFSET: " + FENTRY_TABLE_OFFSET);
+            System.out.println("FNODE_TABLE_OFFSET: " + FNODE_TABLE_OFFSET);
+            System.out.println("TOTAL_METADATA_SIZE: " + TOTAL_METADATA_SIZE);
+            System.out.println("METADATA_BLOCK_COUNT: " + METADATA_BLOCK_COUNT);
+            System.out.println("DATA_REGION_OFFSET: " + DATA_REGION_OFFSET);
+            System.out.println();
+            // flush
+            System.out.flush();
 
-            // Open / size the file
+
             this.disk = new RandomAccessFile(filename, "rw");
 
             this.fEntryTable = new FEntry[MAX_FILES];
             this.fNodeTable  = new FNode[MAX_FNODES];
 
-            // If disk is empty, read existing tables, otherwise create empty tables and zero data region
-            if (disk.length() > 0) {
-                // Read the FEntry table from disk
+            if (disk.length() > 0) { // If disk already exists, read data from the disk
+                // Read the FEntry and FNode tables from disk
                 for (int i = 0; i < fEntryTable.length; i++) {
                     fEntryTable[i] = readFEntry(i);
                 }
-                // Read the FNode table from disk
                 for (int i = 0; i < fNodeTable.length; i++) {
                     fNodeTable[i] = readFNode(i);
                 }
             }
-            else {
-                for (int i = 0; i < MAX_FILES; i++) fEntryTable[i] = new FEntry("", (short) 0, (short) -1);
-                for (int i = 0; i < MAX_BLOCKS; i++) { fNodeTable[i] = new FNode(-1); fNodeTable[i].next = -1; }
-                writeFEntries();
-                writeFNodes();
-
-                // Zero data region (each block) once
-                byte[] zero = new byte[BLOCK_SIZE];
-                for (int b = 0; b < MAX_BLOCKS; b++) {
-                    disk.seek(blockOffset(dataStartBlock + b));
-                    disk.write(zero);
+            else { // otherwise, create empty tables and zero data region
+                for (int i = 0; i < fEntryTable.length; i++) {
+                    fEntryTable[i] = new FEntry("", (short) 0, (short) -1);
+                    writeFEntry(i, fEntryTable[i]);
+                }
+                for (int i = 0; i < fNodeTable.length; i++) {
+                    fNodeTable[i] = new FNode(-i, -1);
+                    writeFNode(i, fNodeTable[i]);
+                    // Write 0s to the corresponding data block
+                    writeDataBlock(i, new byte[BLOCK_SIZE]);
                 }
             }
 
-            if (disk.length() < imageBytes) {
-                disk.setLength(imageBytes); // grow to full image size
+            // print the fEntryTable and fNodeTable
+            System.out.println("fEntryTable: ");
+            for (int i = 0; i < fEntryTable.length; i++) {
+                System.out.println(fEntryTable[i].getFilename() + " " + fEntryTable[i].getFilesize() + " " + fEntryTable[i].getFirstBlock());
             }
+            System.out.println("fNodeTable: ");
+            for (int i = 0; i < fNodeTable.length; i++) {
+                System.out.println(fNodeTable[i].blockIndex + " " + fNodeTable[i].next);
+            }
+            System.out.flush();
 
             // Build bitmaps from loaded tables
-            this.usedDataBlocks = new BitSet(MAX_BLOCKS);
-            this.usedFnodes     = new BitSet(MAX_BLOCKS);
+            this.usedFnodes  = new BitSet(MAX_FNODES);
             rebuildBitmaps();
 
         } catch (IOException ioe) {
@@ -320,8 +331,8 @@ public class FileSystemManager {
             // Stage 1: write payload to selected data blocks
             int pos = 0;
             for (int k = 0; k < blocksNeeded; k++) {
-                int dataBlockIdx = dataStartBlock + freeData.get(k); // absolute block index
-                long off = blockOffset(dataBlockIdx);
+                int dataBlockIdx = METADATA_BLOCK_COUNT + freeData.get(k); // absolute block index
+                long off = getDataBlockOffset(dataBlockIdx);
                 byte[] buf = new byte[BLOCK_SIZE];
                 int len = Math.min(BLOCK_SIZE, size - pos);
                 if (len > 0) System.arraycopy(contents, pos, buf, 0, len);
@@ -334,7 +345,7 @@ public class FileSystemManager {
             Integer head = null, prev = null;
             for (int k = 0; k < blocksNeeded; k++) {
                 int fnIdx = freeFn.get(k);
-                int dataBlockAbs = dataStartBlock + freeData.get(k);
+                int dataBlockAbs = METADATA_BLOCK_COUNT + freeData.get(k);
                 fNodeTable[fnIdx] = new FNode(dataBlockAbs);
                 fNodeTable[fnIdx].next = -1;
                 if (prev != null) fNodeTable[prev].next = fnIdx;
@@ -391,7 +402,7 @@ public class FileSystemManager {
                     // If a chain node is invalid, treat as missing/corrupt
                     throw new IllegalStateException("ERROR: file " + fileName + " does not exist");
                 }
-                long off = blockOffset(n.blockIndex);
+                long off = getDataBlockOffset(n.blockIndex);
                 byte[] buf = new byte[Math.min(BLOCK_SIZE, remaining)];
                 disk.seek(off);
                 disk.readFully(buf, 0, buf.length);
@@ -456,7 +467,7 @@ public class FileSystemManager {
 
             // Overwrite data for privacy
             if (n.blockIndex >= 0) {
-                long off = blockOffset(n.blockIndex);
+                long off = getDataBlockOffset(n.blockIndex);
                 byte[] zero = new byte[BLOCK_SIZE];
                 disk.seek(off);
                 disk.write(zero);
@@ -475,8 +486,8 @@ public class FileSystemManager {
     private List<Integer> collectFreeDataBlocks(int needed) {
         List<Integer> out = new ArrayList<>(needed);
         if (needed == 0) return out;
-        for (int i = 0; i < MAX_BLOCKS && out.size() < needed; i++) {
-            if (!usedDataBlocks.get(i)) out.add(i);
+        for (int i = 0; i < MAX_FNODES && out.size() < needed; i++) {
+            if (!usedFnodes.get(i)) out.add(i);
         }
         return out;
     }
@@ -485,7 +496,7 @@ public class FileSystemManager {
     private List<Integer> collectFreeFnodes(int needed) {
         List<Integer> out = new ArrayList<>(needed);
         if (needed == 0) return out;
-        for (int i = 0; i < MAX_BLOCKS && out.size() < needed; i++) {
+        for (int i = 0; i < MAX_FNODES && out.size() < needed; i++) {
             if (!usedFnodes.get(i)) out.add(i);
         }
         return out;
@@ -493,23 +504,13 @@ public class FileSystemManager {
 
     /** Re-scan fnodes to rebuild the "used" bitmaps (called after changes). */
     private void rebuildBitmaps() {
-        usedDataBlocks.clear();
         usedFnodes.clear();
-        for (int i = 0; i < MAX_BLOCKS; i++) {
+        for (int i = 0; i < MAX_FNODES; i++) {
             FNode n = fNodeTable[i];
             if (n != null && n.blockIndex >= 0) {
                 usedFnodes.set(i);
-                int dataRegionIdx = n.blockIndex - dataStartBlock;
-                if (dataRegionIdx >= 0 && dataRegionIdx < MAX_BLOCKS) {
-                    usedDataBlocks.set(dataRegionIdx);
-                }
             }
         }
-    }
-
-    /** Convert absolute block index to byte offset in the file. */
-    private long blockOffset(int absoluteBlockIndex) {
-        return (long) absoluteBlockIndex * BLOCK_SIZE;
     }
 
     // -----------------------
