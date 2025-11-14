@@ -7,7 +7,6 @@ import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.BitSet;
 import java.util.List;
 import java.util.concurrent.locks.*;
@@ -466,8 +465,8 @@ public class FileSystemManager {
             // size (u16) and first (i16)
             short size = (e == null) ? 0 : e.getFilesize();
             short fst  = (e == null) ? -1 : e.getFirstBlock();
-            writeShort(size);
-            writeShort(fst);
+            disk.writeShort(size);
+            disk.writeShort(fst);
         }
     }
 
@@ -479,8 +478,8 @@ public class FileSystemManager {
             byte[] nameBytes = new byte[FENTRY_NAME_LEN];
             disk.readFully(nameBytes);
             String name = new String(nameBytes, StandardCharsets.US_ASCII).trim();
-            short size  = readShort();
-            short fst   = readShort();
+            short size  = disk.readShort();
+            short fst   = disk.readShort();
             fentries[i] = new FEntry(name, size, fst);
         }
     }
@@ -493,8 +492,8 @@ public class FileSystemManager {
             FNode n = fnodes[i];
             int bi = (n == null) ? -1 : n.blockIndex;
             int nx = (n == null) ? -1 : n.next;
-            writeInt(bi);
-            writeInt(nx);
+            disk.writeInt(bi);
+            disk.writeInt(nx);
         }
     }
 
@@ -503,34 +502,11 @@ public class FileSystemManager {
         long off = fnodeTableOffset;
         disk.seek(off);
         for (int i = 0; i < MAX_BLOCKS; i++) {
-            int bi = readInt();
-            int nx = readInt();
+            int bi = disk.readInt();
+            int nx = disk.readInt();
             FNode n = new FNode(bi);
             n.next = nx;
             fnodes[i] = n;
         }
-    }
-
-    // Primitive I/O (little-endian encoding for compactness)
-    private void writeShort(short v) throws IOException {
-        disk.write(v & 0xFF);
-        disk.write((v >>> 8) & 0xFF);
-    }
-    private short readShort() throws IOException {
-        int b0 = disk.read(); int b1 = disk.read();
-        return (short) ((b0 & 0xFF) | ((b1 & 0xFF) << 8));
-    }
-    private void writeInt(int v) throws IOException {
-        disk.write(v       & 0xFF);
-        disk.write((v>>8)  & 0xFF);
-        disk.write((v>>16) & 0xFF);
-        disk.write((v>>24) & 0xFF);
-    }
-    private int readInt() throws IOException {
-        int b0 = disk.read(), b1 = disk.read(), b2 = disk.read(), b3 = disk.read();
-        return  (b0 & 0xFF)       |
-                ((b1 & 0xFF) << 8) |
-                ((b2 & 0xFF) << 16)|
-                ((b3 & 0xFF) << 24);
     }
 }
