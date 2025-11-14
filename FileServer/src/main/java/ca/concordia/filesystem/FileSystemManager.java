@@ -349,10 +349,12 @@ public class FileSystemManager {
     // =========================================================================
 
     /** Linear search for filename in fentries (small MAX_FILES, so OK). */
-    private int findEntry(String name) {
-        for (int i = 0; i < MAX_FILES; i++) {
-            String n = FS.nameOrEmpty(fentries[i]);
-            if (!n.isEmpty() && n.equals(name)) return i;
+    private int findEntry(String filename) {
+        for (int i = 0; i < fentries.length; i++) {
+            FEntry e = fentries[i];
+            if (e != null && !e.getFilename().isEmpty() && e.getFilename().equals(filename)) {
+                return i;
+            }
         }
         return -1;
     }
@@ -462,9 +464,8 @@ public class FileSystemManager {
 
             // name[11] (ASCII, padded with zeros)
             byte[] nameBytes = new byte[FENTRY_NAME_LEN];
-            String n = FS.nameOrEmpty(e);
-            if (!n.isEmpty()) {
-                byte[] raw = n.getBytes(StandardCharsets.US_ASCII);
+            if (e != null && !e.getFilename().isEmpty()) {
+                byte[] raw = e.getFilename().getBytes(StandardCharsets.US_ASCII);
                 System.arraycopy(raw, 0, nameBytes, 0, Math.min(raw.length, FENTRY_NAME_LEN));
             }
             disk.write(nameBytes);
@@ -538,10 +539,5 @@ public class FileSystemManager {
                 ((b1 & 0xFF) << 8) |
                 ((b2 & 0xFF) << 16)|
                 ((b3 & 0xFF) << 24);
-    }
-
-    /** Small utility for safe name extraction. */
-    private static final class FS {
-        static String nameOrEmpty(FEntry e) { return (e == null) ? "" : (e.getFilename() == null ? "" : e.getFilename().trim()); }
     }
 }
