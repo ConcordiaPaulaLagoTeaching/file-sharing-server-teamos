@@ -29,39 +29,27 @@ import java.util.concurrent.locks.*;
  */
 public class FileSystemManager {
 
-    // -----------------------
-    // Tunables / capacities
-    // -----------------------
-    private static final int BLOCK_SIZE = 128;   // Size of one data block (bytes)
-    private static final int MAX_FILES  = 5;     // Max number of directory entries
-    private static final int MAX_FNODES = 10;     // Max number of directory entries
 
-    // -----------------------
-    // On-disk struct sizes
-    // -----------------------
+    private static final int BLOCK_SIZE = 128; // Size of one data block (bytes)
+    private static final int MAX_FILES  = 5;   // Max number of directory entries
+    private static final int MAX_FNODES = 10;  // Max number of directory entries
+
     private static final int FENTRY_NAME_LEN = 11;         // name bytes (ASCII)
     private static final int FENTRY_BYTES    = 11 + 2 + 2; // name[11] + size(u16) + firstFNode(i16)
     private static final int FNODE_BYTES     = 4 + 4;      // blockIndex(i32 absolute) + nextFNode(i32)
-
-    // -----------------------
-    // Disk layout info
-    // -----------------------
-    private final RandomAccessFile disk;   // backing file (the whole filesystem)
-
+    
     private static final int FENTRY_TABLE_OFFSET  = 0; 
     private static final int FNODE_TABLE_OFFSET   = FENTRY_TABLE_OFFSET + MAX_FILES * FENTRY_BYTES;
     private static final int TOTAL_METADATA_SIZE  = FNODE_TABLE_OFFSET + MAX_FNODES * FNODE_BYTES;
     private static final int METADATA_BLOCK_COUNT = (TOTAL_METADATA_SIZE + BLOCK_SIZE - 1) / BLOCK_SIZE; // round up TOTAL_METADATA_SIZE / BLOCK_SIZE to the nearest integer
     private static final int DATA_REGION_OFFSET   = METADATA_BLOCK_COUNT * BLOCK_SIZE;
-
-    // -----------------------
-    // In-memory mirrors
-    // -----------------------
+    
     private final FEntry[] fEntryTable;
     private final FNode[]  fNodeTable;
-
+    
     private final BitSet usedFnodes;       // true if fnode[i] is in use (blockIndex >= 0)
-
+    
+    private final RandomAccessFile disk;   // backing file (the whole filesystem)
     // Readers-writer lock: allows concurrent reads; writes are exclusive
     private final ReadWriteLock readWriteLock = new ReentrantReadWriteLock(true); // flag set to true for fairness to prevent starvation
 
@@ -84,17 +72,25 @@ public class FileSystemManager {
     
     /** Write an FEntry to the disk. */
     private void writeFEntry(int index, FEntry fEntry) throws IOException {
-        // Seek to the start of the FEntry at the given index
-        disk.seek(FENTRY_TABLE_OFFSET + index * FENTRY_BYTES);
+        try {
+            // Seek to the start of the FEntry at the given index
+            disk.seek(FENTRY_TABLE_OFFSET + index * FENTRY_BYTES);
 
-        // Ensure filename is exactly 11 bytes (pad with zeros or truncate)
-        byte[] nameBytes = fEntry.getFilename().getBytes(StandardCharsets.UTF_8);
-        byte[] paddedName = java.util.Arrays.copyOf(nameBytes, FENTRY_NAME_LEN);
-        
-        // Write fEntry content to disk
-        disk.write(paddedName);
-        disk.writeShort(fEntry.getFilesize());
-        disk.writeShort(fEntry.getFirstBlock());
+            // Ensure filename is exactly 11 bytes (pad with zeros or truncate)
+            byte[] nameBytes = fEntry.getFilename().getBytes(StandardCharsets.UTF_8);
+            byte[] paddedName = java.util.Arrays.copyOf(nameBytes, FENTRY_NAME_LEN);
+            
+            // Write fEntry content to disk
+            disk.write(paddedName);
+            disk.writeShort(fEntry.getFilesize());
+            disk.writeShort(fEntry.getFirstBlock());
+
+            // Finally, update the in-memory mirror if everything went well
+            fEntryTable[index] = fEntry;
+        }
+        catch (IOException ioe) {
+            throw new IOException("Failed to write FEntry to disk", ioe);
+        }
     }
 
     /** Read an FNode from the disk. */
@@ -124,6 +120,7 @@ public class FileSystemManager {
         return DATA_REGION_OFFSET + index * BLOCK_SIZE;
     }
 
+    /** Write the data to the disk at the given index. */
     private void writeDataBlock(int index, byte[] data) throws IOException {
         // Seek to the start of the data block at the given index
         disk.seek(getDataBlockOffset(index));
@@ -132,6 +129,7 @@ public class FileSystemManager {
         disk.write(data);
     }
 
+    /** Read the data from the disk at the given index. */
     private byte[] readDataBlock(int index, int length) throws IOException {
         // Seek to the start of the data block at the given index
         disk.seek(getDataBlockOffset(index));
@@ -140,6 +138,17 @@ public class FileSystemManager {
         byte[] data = new byte[length];
         disk.readFully(data);
         return data;
+    }
+
+    /** Find the index of the FEntry with the given filename. Return -1 if not found. */
+    private int findFEntry(String filename) {
+        for (int i = 0; i < fEntryTable.length; i++) {
+            FEntry e = fEntryTable[i];
+            if (e != null && !e.getFilename().isEmpty() && e.getFilename().equals(filename)) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     /**
@@ -190,8 +199,7 @@ public class FileSystemManager {
             }
             else { // otherwise, create empty tables and zero data region
                 for (int i = 0; i < fEntryTable.length; i++) {
-                    fEntryTable[i] = new FEntry("", (short) 0, (short) -1);
-                    writeFEntry(i, fEntryTable[i]);
+                    writeFEntry(i, new FEntry("", (short) 0, (short) -1));
                 }
                 for (int i = 0; i < fNodeTable.length; i++) {
                     fNodeTable[i] = new FNode(-i, -1);
@@ -221,10 +229,6 @@ public class FileSystemManager {
         }
     }
 
-    // =========================================================================
-    // Public API (used by the server; these implement assignment semantics)
-    // =========================================================================
-
     public void createFile(String fileName) throws Exception {
         if (fileName.isEmpty()) {
             throw new IllegalArgumentException("ERROR: filename cannot be empty");
@@ -238,7 +242,7 @@ public class FileSystemManager {
         readWriteLock.writeLock().lock();
         try {
             // Check if file already exists
-            if (findEntry(fileName) >= 0) {
+            if (findFEntry(fileName) >= 0) {
                 throw new IllegalStateException("ERROR: file " + fileName + " already exists");
             }
 
@@ -256,11 +260,8 @@ public class FileSystemManager {
                 throw new IllegalStateException("ERROR: cannot create more files");
             }
 
-            // Create a new FEntry for the file at the free index
-            fEntryTable[freeFentryIndex] = new FEntry(fileName, (short) 0, (short) -1);
-
-            // Write the FEntry table to disk
-            writeFEntries();
+            // Write the FEntry for the new file to disk
+            writeFEntry(freeFentryIndex, new FEntry(fileName, (short) 0, (short) -1));
         }
         finally {
             // Releasing write lock after file creation is complete
@@ -278,7 +279,7 @@ public class FileSystemManager {
         readWriteLock.writeLock().lock();
         try {
             // Find the index of the file in the FEntry table and throw an error if it doesn't exist
-            int fentryIndex = findEntry(fileName);
+            int fentryIndex = findFEntry(fileName);
             if (fentryIndex < 0) {
                 throw new IllegalStateException("ERROR: file " + fileName + " does not exist");
             }
@@ -314,7 +315,7 @@ public class FileSystemManager {
         readWriteLock.writeLock().lock();
         try {
             // Find the index of the file in the FEntry table and throw an error if it doesn't exist
-            int ei = findEntry(fileName);
+            int ei = findFEntry(fileName);
             if (ei < 0)  {
                 throw new IllegalStateException("ERROR: file " + fileName + " does not exist");
             }
@@ -394,7 +395,7 @@ public class FileSystemManager {
         readWriteLock.readLock().lock();
         try {
             // Find the index of the file in the FEntry table and throw an error if it doesn't exist
-            int fentryIndex = findEntry(fileName);
+            int fentryIndex = findFEntry(fileName);
             if (fentryIndex < 0) {
                 throw new IllegalStateException("ERROR: file " + fileName + " does not exist");
             }
@@ -451,17 +452,6 @@ public class FileSystemManager {
     // =========================================================================
     // Helpers: lookup, allocation, freeing, serialization
     // =========================================================================
-
-    /** Linear search for filename in fentries (small MAX_FILES, so OK). */
-    private int findEntry(String filename) {
-        for (int i = 0; i < fEntryTable.length; i++) {
-            FEntry e = fEntryTable[i];
-            if (e != null && !e.getFilename().isEmpty() && e.getFilename().equals(filename)) {
-                return i;
-            }
-        }
-        return -1;
-    }
 
     /**
      * Free a chain starting at head index: zero its data blocks, mark fnodes free.
