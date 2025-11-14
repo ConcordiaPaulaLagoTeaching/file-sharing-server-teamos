@@ -167,19 +167,31 @@ public class FileSystemManager {
      * Leaves the FEntry slot empty.
      */
     public void deleteFile(String fileName) throws Exception {
+        // Acquire write lock.
+        // This thread gets exclusive access to the filesystem until it releases the lock
         readWriteLock.writeLock().lock();
         try {
-            int ei = findEntryOrThrow(fileName);
-            FEntry e = fentries[ei];
+            // Find the index of the file in the FEntry table and throw an error if it doesn't exist
+            int fentryIndex = findEntry(fileName);
+            if (fentryIndex < 0) {
+                throw new IllegalStateException("ERROR: file " + fileName + " does not exist");
+            }
+            
+            // Get the FEntry for the file
+            FEntry fileEntry = fentries[fentryIndex];
 
             // Free chain & zero the data it referenced
-            freeChainZero(e.getFirstBlock());
+            freeChainZero(fileEntry.getFirstBlock());
 
-            // Mark directory slot empty and persist
-            fentries[ei] = new FEntry("", (short) 0, (short) -1);
+            // Free the FEntry slot
+            fentries[fentryIndex] = new FEntry("", (short) 0, (short) -1);
+
+            // Write both FEntry and FNode tables to disk
             writeFEntries();
-            writeFNodes(); // persist node updates from free
-        } finally {
+            writeFNodes();
+        } 
+        finally {
+            // Releasing write lock after file deletion is complete
             readWriteLock.writeLock().unlock();
         }
     }
