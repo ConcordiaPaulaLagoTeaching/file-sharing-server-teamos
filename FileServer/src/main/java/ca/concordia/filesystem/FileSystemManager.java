@@ -7,7 +7,6 @@ import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.BitSet;
 import java.util.List;
 import java.util.concurrent.locks.*;
 
@@ -46,8 +45,6 @@ public class FileSystemManager {
     
     private final FEntry[] fEntryTable;
     private final FNode[]  fNodeTable;
-    
-    private final BitSet usedFnodes;       // true if fnode[i] is in use (blockIndex >= 0)
     
     private final RandomAccessFile disk;   // backing file (the whole filesystem)
     // Readers-writer lock: allows concurrent reads; writes are exclusive
@@ -219,11 +216,6 @@ public class FileSystemManager {
                 System.out.println(fNodeTable[i].blockIndex + " " + fNodeTable[i].next);
             }
             System.out.flush();
-
-            // Build bitmaps from loaded tables
-            this.usedFnodes  = new BitSet(MAX_FNODES);
-            rebuildBitmaps();
-
         } catch (IOException ioe) {
             throw new RuntimeException("Failed to open filesystem image", ioe);
         }
@@ -269,10 +261,6 @@ public class FileSystemManager {
         }
     }
 
-    /**
-     * Delete a file: free all fnodes in its chain and zero all data blocks for privacy.
-     * Leaves the FEntry slot empty.
-     */
     public void deleteFile(String fileName) throws Exception {
         // Acquire write lock.
         // This thread gets exclusive access to the filesystem until it releases the lock
@@ -332,17 +320,15 @@ public class FileSystemManager {
             // Compute number of blocks needed for payload
             int blocksNeeded = (size + BLOCK_SIZE - 1) / BLOCK_SIZE;
 
-            // Collect free resources WITHOUT mutating any state
-            List<Integer> freeData = collectFreeDataBlocks(blocksNeeded);
             List<Integer> freeFn   = collectFreeFnodes(blocksNeeded);
-            if (blocksNeeded > 0 && (freeData.size() < blocksNeeded || freeFn.size() < blocksNeeded)) {
+            if (blocksNeeded > 0 && (freeFn.size() < blocksNeeded)) {
                 throw new IllegalStateException("ERROR: file too large");
             }
 
             // Stage 1: write payload to selected data blocks
             int pos = 0;
             for (int k = 0; k < blocksNeeded; k++) {
-                int dataBlockIdx = METADATA_BLOCK_COUNT + freeData.get(k); // absolute block index
+                int dataBlockIdx = METADATA_BLOCK_COUNT + freeFn.get(k); // absolute block index
                 long off = getDataBlockOffset(dataBlockIdx);
                 byte[] buf = new byte[BLOCK_SIZE];
                 int len = Math.min(BLOCK_SIZE, size - pos);
@@ -356,7 +342,7 @@ public class FileSystemManager {
             Integer head = null, prev = null;
             for (int k = 0; k < blocksNeeded; k++) {
                 int fnIdx = freeFn.get(k);
-                int dataBlockAbs = METADATA_BLOCK_COUNT + freeData.get(k);
+                int dataBlockAbs = METADATA_BLOCK_COUNT + freeFn.get(k);
                 fNodeTable[fnIdx] = new FNode(dataBlockAbs);
                 fNodeTable[fnIdx].next = -1;
                 if (prev != null) fNodeTable[prev].next = fnIdx;
@@ -378,9 +364,6 @@ public class FileSystemManager {
                 freeChainZero(old.getFirstBlock());
                 writeFNodes();
             }
-
-            // Recompute used bitmaps for future allocations
-            rebuildBitmaps();
 
         } finally {
             readWriteLock.writeLock().unlock();
@@ -477,17 +460,6 @@ public class FileSystemManager {
             fNodeTable[fi].next = -1;
             fi = next;
         }
-        rebuildBitmaps();
-    }
-
-    /** Collect N free data-region block indices (relative to data region), up to 'needed'. */
-    private List<Integer> collectFreeDataBlocks(int needed) {
-        List<Integer> out = new ArrayList<>(needed);
-        if (needed == 0) return out;
-        for (int i = 0; i < MAX_FNODES && out.size() < needed; i++) {
-            if (!usedFnodes.get(i)) out.add(i);
-        }
-        return out;
     }
 
     /** Collect N free fnode indices, up to 'needed'. */
@@ -495,25 +467,10 @@ public class FileSystemManager {
         List<Integer> out = new ArrayList<>(needed);
         if (needed == 0) return out;
         for (int i = 0; i < MAX_FNODES && out.size() < needed; i++) {
-            if (!usedFnodes.get(i)) out.add(i);
+            if (fNodeTable[i].blockIndex < 0) out.add(i);
         }
         return out;
     }
-
-    /** Re-scan fnodes to rebuild the "used" bitmaps (called after changes). */
-    private void rebuildBitmaps() {
-        usedFnodes.clear();
-        for (int i = 0; i < MAX_FNODES; i++) {
-            FNode n = fNodeTable[i];
-            if (n != null && n.blockIndex >= 0) {
-                usedFnodes.set(i);
-            }
-        }
-    }
-
-    // -----------------------
-    // Serialization helpers
-    // -----------------------
 
     /** Persist all FEntries in order (fixed width). */
     private void writeFEntries() throws IOException {
