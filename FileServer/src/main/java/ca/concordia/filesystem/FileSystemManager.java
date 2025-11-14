@@ -28,7 +28,6 @@ import java.util.concurrent.locks.*;
  */
 public class FileSystemManager {
 
-
     private static final int BLOCK_SIZE = 128; // Size of one data block (bytes)
     private static final int MAX_FILES  = 5;   // Max number of directory entries
     private static final int MAX_FNODES = 10;  // Max number of directory entries
@@ -146,6 +145,16 @@ public class FileSystemManager {
             }
         }
         return -1;
+    }
+
+    /** Get the first N free FNodes. */
+    private List<Integer> collectFreeFNodes(int needed) {
+        List<Integer> out = new ArrayList<>(needed);
+        if (needed == 0) return out;
+        for (int i = 0; i < MAX_FNODES && out.size() < needed; i++) {
+            if (fNodeTable[i].blockIndex < 0) out.add(i);
+        }
+        return out;
     }
 
     /**
@@ -320,7 +329,7 @@ public class FileSystemManager {
             // Compute number of blocks needed for payload
             int blocksNeeded = (size + BLOCK_SIZE - 1) / BLOCK_SIZE;
 
-            List<Integer> freeFn   = collectFreeFnodes(blocksNeeded);
+            List<Integer> freeFn   = collectFreeFNodes(blocksNeeded);
             if (blocksNeeded > 0 && (freeFn.size() < blocksNeeded)) {
                 throw new IllegalStateException("ERROR: file too large");
             }
@@ -460,16 +469,6 @@ public class FileSystemManager {
             fNodeTable[fi].next = -1;
             fi = next;
         }
-    }
-
-    /** Collect N free fnode indices, up to 'needed'. */
-    private List<Integer> collectFreeFnodes(int needed) {
-        List<Integer> out = new ArrayList<>(needed);
-        if (needed == 0) return out;
-        for (int i = 0; i < MAX_FNODES && out.size() < needed; i++) {
-            if (fNodeTable[i].blockIndex < 0) out.add(i);
-        }
-        return out;
     }
 
     /** Persist all FEntries in order (fixed width). */
