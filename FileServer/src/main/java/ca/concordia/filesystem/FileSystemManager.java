@@ -208,13 +208,13 @@ public class FileSystemManager {
         readWriteLock.writeLock().lock();
         try {
             // Find the index of the file in the FEntry table and throw an error if it doesn't exist
-            int fentryIndex = findEntry(fileName);
-            if (fentryIndex < 0)  {
+            int ei = findEntry(fileName);
+            if (ei < 0)  {
                 throw new IllegalStateException("ERROR: file " + fileName + " does not exist");
             }
 
             // Get the current FEntry for the file
-            FEntry old = fentries[fentryIndex];
+            FEntry old = fentries[ei];
 
             // Size validation (fits in unsigned short per spec)
             int size = (contents == null) ? 0 : contents.length;
