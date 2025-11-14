@@ -100,7 +100,7 @@ public class FileSystemManager {
             this.fnodes   = new FNode[MAX_BLOCKS];
 
             // If disk is empty, read existing tables, otherwise create empty tables and zero data region
-            if (disk.length() == 0) {
+            if (disk.length() > 0) {
                 readFEntries();
                 readFNodes();
             }
@@ -109,7 +109,7 @@ public class FileSystemManager {
                 for (int i = 0; i < MAX_BLOCKS; i++) { fnodes[i] = new FNode(-1); fnodes[i].next = -1; }
                 writeFEntries();
                 writeFNodes();
-    
+
                 // Zero data region (each block) once
                 byte[] zero = new byte[BLOCK_SIZE];
                 for (int b = 0; b < MAX_BLOCKS; b++) {
@@ -143,7 +143,7 @@ public class FileSystemManager {
         if (fileName.length() > FENTRY_NAME_LEN) {
             throw new IllegalArgumentException("ERROR: filename too large");
         }
-        
+
         // Acquire write lock.
         // This thread gets exclusive access to the filesystem until it releases the lock
         readWriteLock.writeLock().lock();
@@ -152,7 +152,7 @@ public class FileSystemManager {
             if (findEntry(fileName) >= 0) {
                 throw new IllegalStateException("ERROR: file " + fileName + " already exists");
             }
-            
+
             // Find the first free FEntry index
             int freeFentryIndex = -1;
             for (int i = 0; i < fentries.length; i++) {
@@ -161,7 +161,7 @@ public class FileSystemManager {
                     break;
                 }
             }
-            
+
             // If no free FEntry is found, throw an error
             if (freeFentryIndex < 0) {
                 throw new IllegalStateException("ERROR: cannot create more files");
@@ -172,7 +172,7 @@ public class FileSystemManager {
 
             // Write the FEntry table to disk
             writeFEntries();
-        } 
+        }
         finally {
             // Releasing write lock after file creation is complete
             readWriteLock.writeLock().unlock();
@@ -193,7 +193,7 @@ public class FileSystemManager {
             if (fentryIndex < 0) {
                 throw new IllegalStateException("ERROR: file " + fileName + " does not exist");
             }
-            
+
             // Get the FEntry for the file
             FEntry fileEntry = fentries[fentryIndex];
 
@@ -206,7 +206,7 @@ public class FileSystemManager {
             // Write both FEntry and FNode tables to disk
             writeFEntries();
             writeFNodes();
-        } 
+        }
         finally {
             // Releasing write lock after file deletion is complete
             readWriteLock.writeLock().unlock();
