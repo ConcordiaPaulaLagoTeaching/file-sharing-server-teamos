@@ -94,16 +94,33 @@ public class FileSystemManager {
 
             // Open / size the file
             this.disk = new RandomAccessFile(filename, "rw");
-            long oldLen = disk.length();
-            if (disk.length() < imageBytes) {
-                disk.setLength(imageBytes); // grow to full image size
-            }
 
             // Prepare in-memory tables
             this.fentries = new FEntry[MAX_FILES];
             this.fnodes   = new FNode[MAX_BLOCKS];
-            // If oldLen == 0 → brand new image; otherwise read existing tables
-            loadOrInitTables(oldLen == 0);
+
+            // If disk is empty, read existing tables, otherwise create empty tables and zero data region
+            if (disk.length() == 0) {
+                readFEntries();
+                readFNodes();
+            }
+            else {
+                for (int i = 0; i < MAX_FILES; i++) fentries[i] = new FEntry("", (short) 0, (short) -1);
+                for (int i = 0; i < MAX_BLOCKS; i++) { fnodes[i] = new FNode(-1); fnodes[i].next = -1; }
+                writeFEntries();
+                writeFNodes();
+    
+                // Zero data region (each block) once
+                byte[] zero = new byte[BLOCK_SIZE];
+                for (int b = 0; b < MAX_BLOCKS; b++) {
+                    disk.seek(blockOffset(dataStartBlock + b));
+                    disk.write(zero);
+                }
+            }
+
+            if (disk.length() < imageBytes) {
+                disk.setLength(imageBytes); // grow to full image size
+            }
 
             // Build bitmaps from loaded tables
             this.usedDataBlocks = new BitSet(MAX_BLOCKS);
@@ -425,30 +442,6 @@ public class FileSystemManager {
     /** Convert absolute block index to byte offset in the file. */
     private long blockOffset(int absoluteBlockIndex) {
         return (long) absoluteBlockIndex * BLOCK_SIZE;
-    }
-
-    /**
-     * Load tables from disk, or initialize a fresh filesystem:
-     * - fresh: create empty entries/nodes and zero out the data region once.
-     * - existing: read both tables as-is.
-     */
-    private void loadOrInitTables(boolean fresh) throws IOException {
-        if (fresh) {
-            for (int i = 0; i < MAX_FILES; i++) fentries[i] = new FEntry("", (short) 0, (short) -1);
-            for (int i = 0; i < MAX_BLOCKS; i++) { fnodes[i] = new FNode(-1); fnodes[i].next = -1; }
-            writeFEntries();
-            writeFNodes();
-
-            // Zero data region (each block) once
-            byte[] zero = new byte[BLOCK_SIZE];
-            for (int b = 0; b < MAX_BLOCKS; b++) {
-                disk.seek(blockOffset(dataStartBlock + b));
-                disk.write(zero);
-            }
-            return;
-        }
-        readFEntries();
-        readFNodes();
     }
 
     // -----------------------
