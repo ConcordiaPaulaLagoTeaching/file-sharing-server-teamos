@@ -301,18 +301,21 @@ public class FileSystemManager {
         }
     }
 
-    /**
-     * Return all non-empty filenames (sorted).
-     */
     public String[] listFiles() {
+        // Acquire read lock for getting shared read access to the filesystem
         readWriteLock.readLock().lock();
         try {
-            return Arrays.stream(fentries)
-                    .map(FS::nameOrEmpty)
-                    .filter(n -> !n.isEmpty())
-                    .sorted()
-                    .toArray(String[]::new);
+            ArrayList<String> fileNames = new ArrayList<>();
+            for (int i = 0; i < fentries.length; i++) {
+                if (fentries[i] != null && !fentries[i].getFilename().isEmpty()) {
+                    fileNames.add(fentries[i].getFilename());
+                }
+            }
+            fileNames.sort(String::compareTo); // Sort the filenames in ascending order
+
+            return fileNames.toArray(new String[fileNames.size()]); // Convert the ArrayList to an array
         } finally {
+            // Releasing read lock after read operation is complete
             readWriteLock.readLock().unlock();
         }
     }

@@ -82,7 +82,7 @@ class ClientHandler extends Thread {
                         try {
                             String[] names = fsManager.listFiles();
                             // Comma-separated list of filenames (empty line if none)
-                            writer.println(String.join(",", names));
+                            writer.println(String.join(", ", names));
                         } catch (Exception e) {
                             writer.println(e.getMessage() != null ? e.getMessage() : "ERROR: internal error");
                         }
