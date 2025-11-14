@@ -87,6 +87,21 @@ public class FileSystemManager {
 
         return new FEntry(fileName, fileSize, firstBlock);
     }
+    
+    /** Write an FEntry to the disk. */
+    private void writeFEntry(int index, FEntry fEntry) throws IOException {
+        // Seek to the start of the FEntry at the given index
+        disk.seek(FENTRY_TABLE_OFFSET + index * FENTRY_BYTES);
+
+        // Ensure filename is exactly 11 bytes (pad with zeros or truncate)
+        byte[] nameBytes = fEntry.getFilename().getBytes(StandardCharsets.UTF_8);
+        byte[] paddedName = java.util.Arrays.copyOf(nameBytes, FENTRY_NAME_LEN);
+        
+        // Write fEntry content to disk
+        disk.write(paddedName);
+        disk.writeShort(fEntry.getFilesize());
+        disk.writeShort(fEntry.getFirstBlock());
+    }
 
     /** Read an FNode from the disk. */
     private FNode readFNode(int index) throws IOException {
@@ -98,6 +113,24 @@ public class FileSystemManager {
         int nextBlock = disk.readInt();
 
         return new FNode(blockIndex, nextBlock);
+    }
+
+    /** Write an FNode to the disk. */
+    private void writeFNode(int index, FNode fNode) throws IOException {
+        // Seek to the start of the FNode at the given index
+        disk.seek(FNODE_TABLE_OFFSET + index * FNODE_BYTES);
+
+        // Write fNode content to disk
+        disk.writeInt(fNode.blockIndex);
+        disk.writeInt(fNode.next);
+    }
+
+    private void writeDataBlock(int index, byte[] data) throws IOException {
+        // Seek to the start of the data block at the given index
+        disk.seek(DATA_REGION_OFFSET + index * BLOCK_SIZE);
+
+        // Write the data to the disk
+        disk.write(data);
     }
 
     /**
@@ -485,37 +518,15 @@ public class FileSystemManager {
 
     /** Persist all FEntries in order (fixed width). */
     private void writeFEntries() throws IOException {
-        long off = FENTRY_TABLE_OFFSET;
-        disk.seek(off);
         for (int i = 0; i < MAX_FILES; i++) {
-            FEntry e = fEntryTable[i];
-
-            // name[11] (ASCII, padded with zeros)
-            byte[] nameBytes = new byte[FENTRY_NAME_LEN];
-            if (e != null && !e.getFilename().isEmpty()) {
-                byte[] raw = e.getFilename().getBytes(StandardCharsets.UTF_8);
-                System.arraycopy(raw, 0, nameBytes, 0, Math.min(raw.length, FENTRY_NAME_LEN));
-            }
-            disk.write(nameBytes);
-
-            // size (u16) and first (i16)
-            short size = (e == null) ? 0 : e.getFilesize();
-            short fst  = (e == null) ? -1 : e.getFirstBlock();
-            disk.writeShort(size);
-            disk.writeShort(fst);
+            writeFEntry(i, fEntryTable[i]);
         }
     }
 
     /** Persist all FNodes in order. */
     private void writeFNodes() throws IOException {
-        long off = FNODE_TABLE_OFFSET;
-        disk.seek(off);
-        for (int i = 0; i < MAX_BLOCKS; i++) {
-            FNode n = fNodeTable[i];
-            int bi = (n == null) ? -1 : n.blockIndex;
-            int nx = (n == null) ? -1 : n.next;
-            disk.writeInt(bi);
-            disk.writeInt(nx);
+        for (int i = 0; i < MAX_FNODES; i++) {
+            writeFNode(i, fNodeTable[i]);
         }
     }
 }
