@@ -183,6 +183,40 @@ public class FileSystemManager {
         freeFNode(nextIndex);
     }
 
+    public void debugPrintFileSystem() {
+        System.out.println("Constants for the filesystem:");
+        System.out.println("BLOCKSIZE: " + BLOCKSIZE);
+        System.out.println("MAXFILES: " + MAXFILES);
+        System.out.println("MAXBLOCKS: " + MAXBLOCKS);
+        System.out.println();
+        System.out.println("FENTRY_NAME_LEN: " + FENTRY_NAME_LEN);
+        System.out.println("FENTRY_BYTES: " + FENTRY_BYTES);
+        System.out.println("FNODE_BYTES: " + FNODE_BYTES);
+        System.out.println();
+        System.out.println("FENTRY_TABLE_OFFSET: " + FENTRY_TABLE_OFFSET);
+        System.out.println("FNODE_TABLE_OFFSET: " + FNODE_TABLE_OFFSET);
+        System.out.println("TOTAL_METADATA_SIZE: " + TOTAL_METADATA_SIZE);
+        System.out.println("METADATA_BLOCK_COUNT: " + METADATA_BLOCK_COUNT);
+        System.out.println("DATA_REGION_OFFSET: " + DATA_REGION_OFFSET);
+        System.out.println();
+
+        System.out.println("fEntryTable:");
+        for (int i = 0; i < fEntryTable.length; i++) {
+            System.out.println(i + ": " + fEntryTable[i].getFilename() + ", " + fEntryTable[i].getFilesize() + ", " + fEntryTable[i].getFirstBlock());
+        }
+        System.out.println();
+        System.out.println("fNodeTable:");
+        for (int i = 0; i < fNodeTable.length; i++) {
+            String data = "EMPTY";
+            if (fNodeTable[i].blockIndex >= 0) {
+                data = new String(readDataBlock(fNodeTable[i].blockIndex, BLOCKSIZE), StandardCharsets.UTF_8);
+            }
+            System.out.println(i + ": " + fNodeTable[i].blockIndex + ", " + fNodeTable[i].next + ", " + data);
+        }
+        System.out.println();
+        System.out.flush();
+    }
+
     /**
      * Mounts or initializes the filesystem image.
      * If the underlying file is new (length == 0), we initialize empty tables and zero data region.
@@ -223,34 +257,6 @@ public class FileSystemManager {
                     writeDataBlock(i, new byte[BLOCKSIZE]);
                 }
             }
-
-            System.out.println("Constants for the filesystem:");
-            System.out.println("BLOCKSIZE: " + BLOCKSIZE);
-            System.out.println("MAXFILES: " + MAXFILES);
-            System.out.println("MAXBLOCKS: " + MAXBLOCKS);
-            System.out.println();
-            System.out.println("FENTRY_NAME_LEN: " + FENTRY_NAME_LEN);
-            System.out.println("FENTRY_BYTES: " + FENTRY_BYTES);
-            System.out.println("FNODE_BYTES: " + FNODE_BYTES);
-            System.out.println();
-            System.out.println("FENTRY_TABLE_OFFSET: " + FENTRY_TABLE_OFFSET);
-            System.out.println("FNODE_TABLE_OFFSET: " + FNODE_TABLE_OFFSET);
-            System.out.println("TOTAL_METADATA_SIZE: " + TOTAL_METADATA_SIZE);
-            System.out.println("METADATA_BLOCK_COUNT: " + METADATA_BLOCK_COUNT);
-            System.out.println("DATA_REGION_OFFSET: " + DATA_REGION_OFFSET);
-            System.out.println();
-
-            System.out.println("fEntryTable:");
-            for (int i = 0; i < fEntryTable.length; i++) {
-                System.out.println(i + ": " + fEntryTable[i].getFilename() + ", " + fEntryTable[i].getFilesize() + ", " + fEntryTable[i].getFirstBlock());
-            }
-            System.out.println();
-            System.out.println("fNodeTable:");
-            for (int i = 0; i < fNodeTable.length; i++) {
-                System.out.println(i + ": " + fNodeTable[i].blockIndex + ", " + fNodeTable[i].next);
-            }
-            System.out.println();
-            System.out.flush();
 
             instance = this; // Set the instance to the current FileSystemManager
         } catch (IOException ioe) {

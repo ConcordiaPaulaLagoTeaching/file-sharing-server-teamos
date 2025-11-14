@@ -122,6 +122,11 @@ class ClientHandler extends Thread {
                         break;
                     }
                     
+                    case "DEBUG": {
+                        fsManager.debugPrintFileSystem();
+                        break;
+                    }
+                    
                     case "QUIT":
                         // Disconnect each client only (not the entire server)
                         writer.println("SUCCESS: Disconnecting.");
