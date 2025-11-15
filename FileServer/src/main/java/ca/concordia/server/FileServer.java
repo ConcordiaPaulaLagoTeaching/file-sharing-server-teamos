@@ -117,6 +117,14 @@ class ClientHandler extends Thread {
                         String name = parts[1];
                         try {
                             byte[] data = fsManager.readFile(name);
+                            String utf8;
+                            try {
+                                utf8 = new String(data, StandardCharsets.UTF_8);
+                                if (Arrays.equals(utf8.getBytes(StandardCharsets.UTF_8), data)) {
+                                    writer.println(utf8);
+                                    break;
+                                }
+                            } catch (Exception ignore) {}
                             String b64 = Base64.getEncoder().encodeToString(data);
                             writer.println(b64);
                         } catch (Exception e) {
