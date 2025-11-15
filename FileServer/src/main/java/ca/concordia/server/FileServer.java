@@ -9,6 +9,7 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.Base64;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 
 /*
  * ClientHandler class is extended as a subclass of java's Thread class to handle client connections in a multi-threaded environment.
