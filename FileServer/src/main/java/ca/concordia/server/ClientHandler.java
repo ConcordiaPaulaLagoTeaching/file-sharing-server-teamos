@@ -6,8 +6,6 @@ import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.net.Socket;
-import java.util.Base64;
-import java.nio.charset.StandardCharsets;
 
 
 /*
@@ -89,30 +87,17 @@ public class ClientHandler implements Runnable {
                             break;
                         }
                         String name = parts[1];
-                        String payload = (parts.length >= 3) ? parts[2] : "";
+                        String content = (parts.length >= 3) ? parts[2] : "";
                         try {
-                            byte[] content;
-                            if (payload.isEmpty()) {
-                                content = new byte[0];
-                            } else {
-                                try {
-                                    content = Base64.getDecoder().decode(payload);
-                                } catch (IllegalArgumentException ex) {
-                                    content = payload.getBytes(StandardCharsets.UTF_8);
-                                }
-                            }
-                            fsManager.writeFile(name, content);
-                            writer.println("OK");
-                        } catch (IllegalArgumentException iae) {
-                            String msg = iae.getMessage();
-                            if (msg == null || msg.isBlank()) msg = "ERROR: invalid input";
-                            writer.println(msg.startsWith("ERROR:") ? msg : "ERROR: " + msg);
+                            // Convert plain text to bytes
+                            byte[] contentBytes = content.getBytes("UTF-8");
+                            fsManager.writeFile(name, contentBytes);
+                            writer.println("SUCCESS: Written to file '" + name + "'");
                         } catch (Exception e) {
                             writer.println(e.getMessage() != null ? e.getMessage() : "ERROR: internal error");
                         }
                         break;
                     }
-
 
                     // Read the contents of an existing file
                     case "READ": {
@@ -123,8 +108,8 @@ public class ClientHandler implements Runnable {
                         String name = parts[1];
                         try {
                             byte[] data = fsManager.readFile(name);
-                            String b64 = Base64.getEncoder().encodeToString(data);
-                            writer.println(b64);
+                            String content = new String(data, "UTF-8");
+                            writer.println(content);
                         } catch (Exception e) {
                             writer.println(e.getMessage() != null ? e.getMessage() : "ERROR: internal error");
                         }
