@@ -6,9 +6,6 @@ import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.net.Socket;
-import java.nio.charset.StandardCharsets;
-import java.util.Base64;
-import java.util.Arrays;
 
 
 /*
@@ -90,22 +87,12 @@ public class ClientHandler implements Runnable {
                             break;
                         }
                         String name = parts[1];
-                        String payload = (parts.length >= 3) ? parts[2] : "";
+                        String content = (parts.length >= 3) ? parts[2] : "";
                         try {
-                            byte[] contentBytes;
-                            if (payload.isEmpty()) {
-                                contentBytes = new byte[0];
-                            } else {
-                                try {
-                                    contentBytes = Base64.getDecoder().decode(payload);
-                                } catch (IllegalArgumentException ex) {
-                                    contentBytes = payload.getBytes(StandardCharsets.UTF_8);
-                                }
-                            }
-                            System.out.println("Content bytes: " + new String(contentBytes, StandardCharsets.UTF_8));
-                            System.out.println("Payload: " + payload);
+                            // Convert plain text to bytes
+                            byte[] contentBytes = content.getBytes("UTF-8");
                             fsManager.writeFile(name, contentBytes);
-                            writer.println("OK");
+                            writer.println("SUCCESS: Written to file '" + name + "'");
                         } catch (Exception e) {
                             writer.println(e.getMessage() != null ? e.getMessage() : "ERROR: internal error");
                         }
@@ -121,16 +108,8 @@ public class ClientHandler implements Runnable {
                         String name = parts[1];
                         try {
                             byte[] data = fsManager.readFile(name);
-                            String utf8;
-                            try {
-                                utf8 = new String(data, StandardCharsets.UTF_8);
-                                if (Arrays.equals(utf8.getBytes(StandardCharsets.UTF_8), data)) {
-                                    writer.println(utf8);
-                                    break;
-                                }
-                            } catch (Exception ignore) {}
-                            String b64 = Base64.getEncoder().encodeToString(data);
-                            writer.println(b64);
+                            String content = new String(data, "UTF-8");
+                            writer.println(content);
                         } catch (Exception e) {
                             writer.println(e.getMessage() != null ? e.getMessage() : "ERROR: internal error");
                         }
