@@ -28,7 +28,7 @@ public class ClientHandler implements Runnable {
     // Override the run method of the Runnable interface to handle client connections
     @Override
     public void run() {
-        System.out.println("Handling client: " + clientSocket + " in thread " + Thread.currentThread().getName());
+        System.out.println("Handling client: " + clientSocket);
         
         try (
             BufferedReader reader = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
@@ -102,6 +102,8 @@ public class ClientHandler implements Runnable {
                                     contentBytes = payload.getBytes(StandardCharsets.UTF_8);
                                 }
                             }
+                            System.out.println("Content bytes: " + new String(contentBytes, StandardCharsets.UTF_8));
+                            System.out.println("Payload: " + payload);
                             fsManager.writeFile(name, contentBytes);
                             writer.println("OK");
                         } catch (Exception e) {
