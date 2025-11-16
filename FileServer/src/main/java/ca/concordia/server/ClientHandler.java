@@ -6,6 +6,9 @@ import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.net.Socket;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
+import java.util.Arrays;
 
 
 /*
@@ -87,12 +90,20 @@ public class ClientHandler implements Runnable {
                             break;
                         }
                         String name = parts[1];
-                        String content = (parts.length >= 3) ? parts[2] : "";
+                        String payload = (parts.length >= 3) ? parts[2] : "";
                         try {
-                            // Convert plain text to bytes
-                            byte[] contentBytes = content.getBytes("UTF-8");
+                            byte[] contentBytes;
+                            if (payload.isEmpty()) {
+                                contentBytes = new byte[0];
+                            } else {
+                                try {
+                                    contentBytes = Base64.getDecoder().decode(payload);
+                                } catch (IllegalArgumentException ex) {
+                                    contentBytes = payload.getBytes(StandardCharsets.UTF_8);
+                                }
+                            }
                             fsManager.writeFile(name, contentBytes);
-                            writer.println("SUCCESS: Written to file '" + name + "'");
+                            writer.println("OK");
                         } catch (Exception e) {
                             writer.println(e.getMessage() != null ? e.getMessage() : "ERROR: internal error");
                         }
@@ -108,8 +119,16 @@ public class ClientHandler implements Runnable {
                         String name = parts[1];
                         try {
                             byte[] data = fsManager.readFile(name);
-                            String content = new String(data, "UTF-8");
-                            writer.println(content);
+                            String utf8;
+                            try {
+                                utf8 = new String(data, StandardCharsets.UTF_8);
+                                if (Arrays.equals(utf8.getBytes(StandardCharsets.UTF_8), data)) {
+                                    writer.println(utf8);
+                                    break;
+                                }
+                            } catch (Exception ignore) {}
+                            String b64 = Base64.getEncoder().encodeToString(data);
+                            writer.println(b64);
                         } catch (Exception e) {
                             writer.println(e.getMessage() != null ? e.getMessage() : "ERROR: internal error");
                         }
