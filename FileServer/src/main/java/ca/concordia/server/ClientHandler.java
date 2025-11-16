@@ -148,8 +148,12 @@ public class ClientHandler implements Runnable {
                     }
 
                     case "DEBUG": {
-                        fsManager.debugPrintFileSystem();
-                        writer.println("SUCCESS: Debug information printed.");
+                        try {
+                            fsManager.debugPrintFileSystem();
+                            writer.println("SUCCESS: Debug information printed.");
+                        } catch (Exception e) {
+                            writer.println(e.getMessage() != null ? e.getMessage() : "ERROR: internal error");
+                        }
                         break;
                     }
                     

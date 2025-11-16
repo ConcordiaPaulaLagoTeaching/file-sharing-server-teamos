@@ -34,13 +34,19 @@ public class FileServer {
             System.out.println("Server started. Listening on port " + this.port + "...");
 
             while (true) {
-                // Accept a client connection
-                Socket clientSocket = serverSocket.accept();
-                System.out.println("New client connected: " + clientSocket);
+                try {
+                    // Accept a client connection
+                    Socket clientSocket = serverSocket.accept();
+                    System.out.println("New client connected: " + clientSocket);
 
-                // Submit client handler to virtual thread executor
-                ClientHandler clientHandler = new ClientHandler(clientSocket, fsManager);
-                virtualThreadExecutor.submit(clientHandler);
+                    // Submit client handler to virtual thread executor
+                    ClientHandler clientHandler = new ClientHandler(clientSocket, fsManager);
+                    virtualThreadExecutor.submit(clientHandler);
+                } catch (Exception e) {
+                    // Print the error message but continue accepting other clients
+                    System.err.println("Error accepting/handling client connection: " + e.getMessage());
+                    e.printStackTrace();
+                }
             } 
         } catch (Exception e) {
             e.printStackTrace();
