@@ -10,28 +10,24 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.locks.*;
 
-/**
- * FileSystemManager is a tiny, persistent, single-file filesystem with fixed-size metadata:
- * - The entire filesystem lives in one file (RandomAccessFile).
- * - Metadata region: array of FEntry (directory) + array of FNode (block pointers).
- * - Data region     : fixed number of data blocks, each BLOCK_SIZE bytes.
+/*
+ * FileSystemManager is a persistent single-file filesystem with fixed-size of metadata (FEntry and FNode).
+ * The entire filesystem lives in one file (RandomAccessFile).
+ * Metadata region: array of FEntry (directory) + array of FNode (block pointers).
+ * Data region: fixed number of data blocks of BLOCK_SIZE bytes.
  *
- * Key operations (assignment requirements):
- *  - createFile(name)
- *  - writeFile(name, bytes)  -> transactional: all-or-nothing
- *  - readFile(name)          -> reads exactly the stored size
- *  - deleteFile(name)        -> frees chain and zeroes data for privacy
- *  - listFiles()
- *
- * Concurrency:
- *  - ReentrantReadWriteLock: concurrent READs; exclusive for CREATE/WRITE/DELETE.
+ * Key operations:
+ *  - createFile(name)        -> creates a new file
+ *  - writeFile(name, bytes)  -> writes the given bytes to the file
+ *  - readFile(name)          -> reads the file and returns the bytes
+ *  - deleteFile(name)        -> deletes the file
+ *  - listFiles()             -> lists all the files in the filesystem
  */
 public class FileSystemManager {
 
     // Constants for the filesystem
     private static final int BLOCKSIZE = 128; // Size of one data block in bytes
     private static final int MAXFILES  = 5;   // Max number of files (FEntry entries)
-    private static final int MAXBLOCKS = 10;  // Max number of data blocks (FNode entries)
 
     private static final int FENTRY_NAME_LEN = 11;         // Max length of a filename in bytes
     private static final int FENTRY_BYTES    = 11 + 2 + 2; // Size of an FEntry in bytes: name (11) + size (2) + firstFNode (2)
@@ -39,9 +35,12 @@ public class FileSystemManager {
     
     private static final int FENTRY_TABLE_OFFSET  = 0; 
     private static final int FNODE_TABLE_OFFSET   = FENTRY_TABLE_OFFSET + MAXFILES * FENTRY_BYTES;
-    private static final int TOTAL_METADATA_SIZE  = FNODE_TABLE_OFFSET + MAXBLOCKS * FNODE_BYTES;
-    private static final int METADATA_BLOCK_COUNT = (TOTAL_METADATA_SIZE + BLOCKSIZE - 1) / BLOCKSIZE; // round up TOTAL_METADATA_SIZE / BLOCK_SIZE to the nearest integer
-    private static final int DATA_REGION_OFFSET   = METADATA_BLOCK_COUNT * BLOCKSIZE;
+    
+    // Instance variables calculated from totalSize
+    private final int MAXBLOCKS;              // Max number of data blocks (calculated from totalSize / BLOCKSIZE)
+    private final int TOTAL_METADATA_SIZE;    // Total size of metadata region
+    private final int METADATA_BLOCK_COUNT;   // Number of blocks used for metadata
+    private final int DATA_REGION_OFFSET;     // Offset where data blocks start
     
     // In-memory mirrors of the filesystem
     private final FEntry[] fEntryTable; // Array of FEntry entries
@@ -49,176 +48,17 @@ public class FileSystemManager {
     
     // Backing file for filesystem
     private final RandomAccessFile disk; 
-    // Readers-writer lock: allows concurrent reads; writes are exclusive
-    private final ReadWriteLock readWriteLock = new ReentrantReadWriteLock(true);
 
+    // Read-write lock: allows concurrent reads but exclusive writes.
+    // Write lock is used for createFile, deleteFile and writeFile operations since these operations modify the filesystem and need to be atomic.
+    // Read lock is used for readFile and listFiles operations since these operations only read the filesystem and do not need to be atomic.
+    private final ReadWriteLock readWriteLock = new ReentrantReadWriteLock(true); // flag set to true for fairness to prevent starvation
+
+    // Singleton instance of the FileSystemManager
     private static FileSystemManager instance = null;
 
-    /** Read an FEntry from the disk. */
-    private FEntry readFEntry(int index) throws IOException {
-        // Seek to the start of the FEntry at the given index
-        disk.seek(FENTRY_TABLE_OFFSET + index * FENTRY_BYTES);
-
-        // Read the filename
-        byte[] nameBytes = new byte[FENTRY_NAME_LEN];
-        disk.readFully(nameBytes);
-        String fileName = new String(nameBytes, StandardCharsets.UTF_8).trim();
-
-        // Read the file size and first block
-        short fileSize = disk.readShort();
-        short firstBlock = disk.readShort();
-
-        return new FEntry(fileName, fileSize, firstBlock);
-    }
-    
-    /** Write an FEntry to the disk. */
-    private void writeFEntry(int index, FEntry fEntry) throws IOException {
-        // Seek to the start of the FEntry at the given index
-        disk.seek(FENTRY_TABLE_OFFSET + index * FENTRY_BYTES);
-
-        // Ensure filename is exactly 11 bytes (pad with zeros or truncate)
-        byte[] nameBytes = fEntry.getFilename().getBytes(StandardCharsets.UTF_8);
-        byte[] paddedName = java.util.Arrays.copyOf(nameBytes, FENTRY_NAME_LEN);
-        
-        // Write fEntry content to disk
-        disk.write(paddedName);
-        disk.writeShort(fEntry.getFilesize());
-        disk.writeShort(fEntry.getFirstBlock());
-
-        // Finally, update the in-memory mirror if everything went well
-        fEntryTable[index] = fEntry;
-    }
-
-    /** Read an FNode from the disk. */
-    private FNode readFNode(int index) throws IOException {
-        // Seek to the start of the FNode at the given index
-        disk.seek(FNODE_TABLE_OFFSET + index * FNODE_BYTES);
-
-        // Read the block index and next block
-        int blockIndex = disk.readInt();
-        int nextBlock = disk.readInt();
-
-        return new FNode(blockIndex, nextBlock);
-    }
-
-    /** Write an FNode to the disk. */
-    private void writeFNode(int index, FNode fNode) throws IOException {
-        // Seek to the start of the FNode at the given index
-        disk.seek(FNODE_TABLE_OFFSET + index * FNODE_BYTES);
-
-        // Write fNode content to disk
-        disk.writeInt(fNode.blockIndex);
-        disk.writeInt(fNode.next);
-
-        // Finally, update the in-memory mirror if everything went well
-        fNodeTable[index] = fNode;
-    }
-
-    /** Get the offset of the data block at the given index. */
-    private int getDataBlockOffset(int index) {
-        return DATA_REGION_OFFSET + index * BLOCKSIZE;
-    }
-
-    /** Write the data to the disk at the given index. */
-    private void writeDataBlock(int index, byte[] data) throws IOException {
-        // Seek to the start of the data block at the given index
-        disk.seek(getDataBlockOffset(index));
-
-        // Write the data to the disk
-        disk.write(data);
-    }
-
-    /** Read the data from the disk at the given index. */
-    private byte[] readDataBlock(int index, int length) throws IOException {
-        // Seek to the start of the data block at the given index
-        disk.seek(getDataBlockOffset(index));
-
-        // Read the data from the disk
-        byte[] data = new byte[length];
-        disk.readFully(data);
-        return data;
-    }
-
-    /** Find the index of the FEntry with the given filename. Return -1 if not found. */
-    private int findFEntry(String filename) {
-        for (int i = 0; i < fEntryTable.length; i++) {
-            FEntry e = fEntryTable[i];
-            if (e != null && !e.getFilename().isEmpty() && e.getFilename().equals(filename)) {
-                return i;
-            }
-        }
-        return -1;
-    }
-
-    /** Get the first N free FNodes. */
-    private List<Integer> collectFreeFNodes(int needed) {
-        List<Integer> out = new ArrayList<>(needed);
-        if (needed == 0) return out;
-        for (int i = 0; i < MAXBLOCKS && out.size() < needed; i++) {
-            if (fNodeTable[i].blockIndex < 0) out.add(i);
-        }
-        return out;
-    }
-
-    /** Free an FNode chain starting at the given index and zeroing the data blocks. */
-    private void freeFNode(int index) throws IOException {
-        // Simpy return if the index is out of bounds
-        if (index < 0 || index >= MAXBLOCKS) {
-            return;
-        }
-        // No need to free if the FNode is already free
-        if (fNodeTable[index].blockIndex < 0) {
-            return;
-        }
-
-        int nextIndex = fNodeTable[index].next;
-
-        // Write 0s to the corresponding data block
-        writeDataBlock(fNodeTable[index].blockIndex, new byte[BLOCKSIZE]);
-
-        // Free the FNode by writing an empty FNode to the disk
-        writeFNode(index, new FNode(-1, -1));
-        
-        // Free the next FNode
-        freeFNode(nextIndex);
-    }
-
-    public void debugPrintFileSystem() throws IOException {
-        System.out.println("Constants for the filesystem:");
-        System.out.println("BLOCKSIZE: " + BLOCKSIZE);
-        System.out.println("MAXFILES: " + MAXFILES);
-        System.out.println("MAXBLOCKS: " + MAXBLOCKS);
-        System.out.println();
-        System.out.println("FENTRY_NAME_LEN: " + FENTRY_NAME_LEN);
-        System.out.println("FENTRY_BYTES: " + FENTRY_BYTES);
-        System.out.println("FNODE_BYTES: " + FNODE_BYTES);
-        System.out.println();
-        System.out.println("FENTRY_TABLE_OFFSET: " + FENTRY_TABLE_OFFSET);
-        System.out.println("FNODE_TABLE_OFFSET: " + FNODE_TABLE_OFFSET);
-        System.out.println("TOTAL_METADATA_SIZE: " + TOTAL_METADATA_SIZE);
-        System.out.println("METADATA_BLOCK_COUNT: " + METADATA_BLOCK_COUNT);
-        System.out.println("DATA_REGION_OFFSET: " + DATA_REGION_OFFSET);
-        System.out.println();
-
-        System.out.println("fEntryTable:");
-        for (int i = 0; i < fEntryTable.length; i++) {
-            System.out.println(i + ": " + fEntryTable[i].getFilename() + ", " + fEntryTable[i].getFilesize() + ", " + fEntryTable[i].getFirstBlock());
-        }
-        System.out.println();
-        System.out.println("fNodeTable:");
-        for (int i = 0; i < fNodeTable.length; i++) {
-            String data = "EMPTY";
-            if (fNodeTable[i].blockIndex >= 0) {
-                data = new String(readDataBlock(fNodeTable[i].blockIndex, BLOCKSIZE), StandardCharsets.UTF_8);
-            }
-            System.out.println(i + ": " + fNodeTable[i].blockIndex + ", " + fNodeTable[i].next + ", " + data);
-        }
-        System.out.println();
-        System.out.flush();
-    }
-
-    /**
-     * Mounts or initializes the filesystem image.
+    /* Constructor for the FileSystemManager class
+     * Mounts or initializes the filesystem from the given file.
      * If the underlying file is new (length == 0), we initialize empty tables and zero data region.
      */
     public FileSystemManager(String filename, int totalSizeBytes) {
@@ -230,6 +70,15 @@ public class FileSystemManager {
         if (totalSizeBytes <= 0 || (totalSizeBytes % BLOCKSIZE) != 0) {
             throw new IllegalArgumentException("Filesystem total size must be a positive multiple of BLOCK_SIZE");
         }
+
+        // Calculate MAXBLOCKS from totalSize
+        this.MAXBLOCKS = totalSizeBytes / BLOCKSIZE;
+        
+        // Calculate metadata layout constants
+        // Since FNodes can be mapped one-to-one with data blocks, MAXBLOCKS is also the number of FNodes.
+        this.TOTAL_METADATA_SIZE = FNODE_TABLE_OFFSET + MAXBLOCKS * FNODE_BYTES;
+        this.METADATA_BLOCK_COUNT = (TOTAL_METADATA_SIZE + BLOCKSIZE - 1) / BLOCKSIZE; // Round up
+        this.DATA_REGION_OFFSET = METADATA_BLOCK_COUNT * BLOCKSIZE;
 
         try {
             this.disk = new RandomAccessFile(filename, "rw");
@@ -265,6 +114,171 @@ public class FileSystemManager {
         }
     }
 
+    /* Read an FEntry from the disk */
+    private FEntry readFEntry(int index) throws IOException {
+        // Seek to the start of the FEntry at the given index
+        disk.seek(FENTRY_TABLE_OFFSET + index * FENTRY_BYTES);
+
+        // Read the filename
+        byte[] nameBytes = new byte[FENTRY_NAME_LEN];
+        disk.readFully(nameBytes);
+        String fileName = new String(nameBytes, StandardCharsets.UTF_8).trim();
+
+        // Read the file size and first block
+        short fileSize = disk.readShort();
+        short firstBlock = disk.readShort();
+
+        return new FEntry(fileName, fileSize, firstBlock);
+    }
+    
+    /* Write an FEntry to the disk */
+    private void writeFEntry(int index, FEntry fEntry) throws IOException {
+        // Seek to the start of the FEntry at the given index
+        disk.seek(FENTRY_TABLE_OFFSET + index * FENTRY_BYTES);
+
+        // Ensure filename is exactly 11 bytes (pad with zeros or truncate)
+        byte[] nameBytes = fEntry.getFilename().getBytes(StandardCharsets.UTF_8);
+        byte[] paddedName = java.util.Arrays.copyOf(nameBytes, FENTRY_NAME_LEN);
+        
+        // Write fEntry content to disk
+        disk.write(paddedName);
+        disk.writeShort(fEntry.getFilesize());
+        disk.writeShort(fEntry.getFirstBlock());
+
+        // Finally, update the in-memory mirror if everything went well
+        fEntryTable[index] = fEntry;
+    }
+
+    /* Read an FNode from the disk */
+    private FNode readFNode(int index) throws IOException {
+        // Seek to the start of the FNode at the given index
+        disk.seek(FNODE_TABLE_OFFSET + index * FNODE_BYTES);
+
+        // Read the block index and next block
+        int blockIndex = disk.readInt();
+        int nextBlock = disk.readInt();
+
+        return new FNode(blockIndex, nextBlock);
+    }
+
+    /* Write an FNode to the disk */
+    private void writeFNode(int index, FNode fNode) throws IOException {
+        // Seek to the start of the FNode at the given index
+        disk.seek(FNODE_TABLE_OFFSET + index * FNODE_BYTES);
+
+        // Write fNode content to disk
+        disk.writeInt(fNode.blockIndex);
+        disk.writeInt(fNode.next);
+
+        // Finally, update the in-memory mirror if everything went well
+        fNodeTable[index] = fNode;
+    }
+
+    /* Get the offset of the data block at the given index */
+    private int getDataBlockOffset(int index) {
+        return DATA_REGION_OFFSET + index * BLOCKSIZE;
+    }
+
+    /* Write the data to the disk at the given index */
+    private void writeDataBlock(int index, byte[] data) throws IOException {
+        // Seek to the start of the data block at the given index
+        disk.seek(getDataBlockOffset(index));
+
+        // Write the data to the disk
+        disk.write(data);
+    }
+
+    /* Read the data from the disk at the given index */
+    private byte[] readDataBlock(int index, int length) throws IOException {
+        // Seek to the start of the data block at the given index
+        disk.seek(getDataBlockOffset(index));
+
+        // Read the data from the disk
+        byte[] data = new byte[length];
+        disk.readFully(data);
+        return data;
+    }
+
+    /* Find the index of the FEntry with the given filename. Return -1 if not found */
+    private int findFEntry(String filename) {
+        for (int i = 0; i < fEntryTable.length; i++) {
+            FEntry e = fEntryTable[i];
+            if (e != null && !e.getFilename().isEmpty() && e.getFilename().equals(filename)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /* Get the first N free FNodes */
+    private List<Integer> collectFreeFNodes(int needed) {
+        List<Integer> out = new ArrayList<>(needed);
+        if (needed == 0) return out;
+        for (int i = 0; i < MAXBLOCKS && out.size() < needed; i++) {
+            if (fNodeTable[i].blockIndex < 0) out.add(i);
+        }
+        return out;
+    }
+
+    /* Free an FNode chain starting at the given index and zeroing the data blocks */
+    private void freeFNode(int index) throws IOException {
+        // Simpy return if the index is out of bounds
+        if (index < 0 || index >= MAXBLOCKS) {
+            return;
+        }
+        // No need to free if the FNode is already free
+        if (fNodeTable[index].blockIndex < 0) {
+            return;
+        }
+
+        int nextIndex = fNodeTable[index].next;
+
+        // Write 0s to the corresponding data block
+        writeDataBlock(fNodeTable[index].blockIndex, new byte[BLOCKSIZE]);
+
+        // Free the FNode by writing an empty FNode to the disk
+        writeFNode(index, new FNode(-1, -1));
+        
+        // Free the next FNode
+        freeFNode(nextIndex);
+    }
+
+    /* Debug print the filesystem */
+    public void debugPrintFileSystem() throws IOException {
+        System.out.println("Constants for the filesystem:");
+        System.out.println("BLOCKSIZE: " + BLOCKSIZE);
+        System.out.println("MAXFILES: " + MAXFILES);
+        System.out.println("MAXBLOCKS: " + MAXBLOCKS);
+        System.out.println();
+        System.out.println("FENTRY_NAME_LEN: " + FENTRY_NAME_LEN);
+        System.out.println("FENTRY_BYTES: " + FENTRY_BYTES);
+        System.out.println("FNODE_BYTES: " + FNODE_BYTES);
+        System.out.println();
+        System.out.println("FENTRY_TABLE_OFFSET: " + FENTRY_TABLE_OFFSET);
+        System.out.println("FNODE_TABLE_OFFSET: " + FNODE_TABLE_OFFSET);
+        System.out.println("TOTAL_METADATA_SIZE: " + TOTAL_METADATA_SIZE);
+        System.out.println("METADATA_BLOCK_COUNT: " + METADATA_BLOCK_COUNT);
+        System.out.println("DATA_REGION_OFFSET: " + DATA_REGION_OFFSET);
+        System.out.println();
+
+        System.out.println("fEntryTable:");
+        for (int i = 0; i < fEntryTable.length; i++) {
+            System.out.println(i + ": " + fEntryTable[i].getFilename() + ", " + fEntryTable[i].getFilesize() + ", " + fEntryTable[i].getFirstBlock());
+        }
+        System.out.println();
+        System.out.println("fNodeTable:");
+        for (int i = 0; i < fNodeTable.length; i++) {
+            String data = "EMPTY";
+            if (fNodeTable[i].blockIndex >= 0) {
+                data = new String(readDataBlock(fNodeTable[i].blockIndex, BLOCKSIZE), StandardCharsets.UTF_8);
+            }
+            System.out.println(i + ": " + fNodeTable[i].blockIndex + ", " + fNodeTable[i].next + ", " + data);
+        }
+        System.out.println();
+        System.out.flush();
+    }
+
+    /* Create a new file */
     public void createFile(String fileName) throws Exception {
         if (fileName.isEmpty()) {
             throw new IllegalArgumentException("ERROR: filename cannot be empty");
@@ -273,7 +287,7 @@ public class FileSystemManager {
             throw new IllegalArgumentException("ERROR: filename too large");
         }
 
-        // Acquire write lock.
+        // Acquire write lock
         // This thread gets exclusive access to the filesystem until it releases the lock
         readWriteLock.writeLock().lock();
         try {
@@ -305,6 +319,7 @@ public class FileSystemManager {
         }
     }
 
+    /* Delete an existing file */
     public void deleteFile(String fileName) throws Exception {
         // Acquire write lock.
         // This thread gets exclusive access to the filesystem until it releases the lock
@@ -328,14 +343,7 @@ public class FileSystemManager {
         }
     }
 
-    /**
-     * Transactional write:
-     * 1) Validate resources (enough data blocks + fnodes).
-     * 2) Write new data blocks.
-     * 3) Build new fnode chain and persist it.
-     * 4) Atomically flip FEntry to point to new chain (size + head).
-     * 5) Free/zero the OLD chain.
-     */
+    /* Write the given bytes to the file */
     public void writeFile(String fileName, byte[] contents) throws Exception {
         readWriteLock.writeLock().lock();
         try {
@@ -405,10 +413,7 @@ public class FileSystemManager {
         }
     }
 
-    /**
-     * Read exactly the stored size from the chain into a byte[].
-     * Errors if chain is broken or file is missing (consistent with spec).
-     */
+    /* Read the file and return the bytes */
     public byte[] readFile(String fileName) throws Exception {
         readWriteLock.readLock().lock();
         try {
@@ -448,6 +453,8 @@ public class FileSystemManager {
         }
     }
 
+
+    /* List all the files in the filesystem */
     public String[] listFiles() {
         // Acquire read lock for getting shared read access to the filesystem
         readWriteLock.readLock().lock();

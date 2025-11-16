@@ -1,5 +1,9 @@
 package ca.concordia.filesystem.datastructures;
 
+/* FEntry class is a data structure that represents an entry in the filesystem (metadata).
+ * It contains the filename, file size and the first block index in the chain.
+ * If firstBlock is -1, it means there is no data content in the file
+ */
 public class FEntry {
 
     private String filename;
