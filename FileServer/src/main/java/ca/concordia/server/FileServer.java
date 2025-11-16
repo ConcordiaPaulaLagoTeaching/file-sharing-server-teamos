@@ -31,7 +31,7 @@ public class FileServer {
         try (ExecutorService virtualThreadExecutor = Executors.newVirtualThreadPerTaskExecutor();
              ServerSocket serverSocket = new ServerSocket(this.port)) { // Create a server socket to listen for client connections
             
-            System.out.println("Server started with virtual threads. Listening on port " + this.port + "...");
+            System.out.println("Server started. Listening on port " + this.port + "...");
 
             while (true) {
                 // Accept a client connection
